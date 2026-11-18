@@ -48,4 +48,6 @@ def test_score_night_end_to_end():
     minutes, bvp, acc = synthetic()
     ep, s = Scorer().score_night(minutes, START, START + HOURS * 3600, bvp=bvp, acc=acc)
     assert len(ep) == HOURS * 120 and set(ep.stage) <= {'Wake', 'Light', 'N3', 'REM'}
-    assert 0 <= s['net_TST_min'] <= HOURS * 60
+    assert set(ep.stage5) <= {'Wake', 'N1', 'N2', 'N3', 'REM'}
+    assert ((ep.stage == 'Light') == ep.stage5.isin(['N1', 'N2'])).all()   # 4 stages = 5 stages with N1+N2 merged
+    assert 0 <= s['net_TST_min'] <= HOURS * 60 and 'lgbm_WASO_min' in s

@@ -1,5 +1,5 @@
 """
-Numbers for the paper (deep net = raw-signal network vs LightGBM, both trained on reliable-stretch labels, 4 stages).
+Numbers for the paper (deep net = raw-signal network vs LightGBM, both trained on reliable-stretch labels, 5 stages scored as 4 with N1+N2 merged).
 
 Output: wrist/paper/paper_night_agreement.csv (per model and measure: means, bias, 95 % limits of agreement, MAE, r,
         ICC(A,1), within-child r, child-mean r), paper_per_night_kappa.csv, paper_label_stats.csv
@@ -14,7 +14,7 @@ from scipy.stats import pearsonr
 
 W = f'{P}/wrist'
 OUT = f'{W}/paper'
-MODELS = {'lgbm_q': 'LightGBM', 'raw_both': 'Deep net'}
+MODELS = {'lgbm_5m': 'LightGBM', 'raw_5m': 'Deep net'}  # 5-stage models, N1+N2 merged (merge_5stage.py)
 
 
 def nights(A):
@@ -76,7 +76,7 @@ def label_stats():
 
 
 def main():
-    A = pd.read_parquet(f'{W}/all_models_pred.parquet', columns=['SPID', 'name', 'epoch', 'y'] + list(MODELS))
+    A = pd.read_parquet(f'{W}/eval_pred.parquet', columns=['SPID', 'name', 'epoch', 'y'] + list(MODELS))
     A = A.sort_values(['name', 'epoch'])
     N = nights(A)
     S = agreement(N)

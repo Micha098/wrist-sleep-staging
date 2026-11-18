@@ -4,7 +4,7 @@ Wrist-only sleep model, step 6: numbers for the validation paper / lab talk.
 1. Splits      : per family fold, nights / children / families / labelled epochs in fit, validation (early
                  stopping) and test sets (the seqnet.py / rawnet.py split).
 2. Stage F1    : per-stage precision, recall, F1, macro F1, accuracy, kappa on held-out test predictions for
-                 empatica (wake/sleep only), lgbm_q, net_q, raw_both, on three epoch sets:
+                 empatica (wake/sleep only), lgbm_5m, raw_5m (5-stage models, N1+N2 merged; merge_5stage.py):
                    reliable - quality-mask epochs, whole night (the training-label definition)
                    first3h  - all scored epochs in the first 3 h
                    all      - all scored epochs, whole night
@@ -26,7 +26,7 @@ from baseline_lgbm import LABEL_EPOCHS, NAMES, P, score
 
 W = f'{P}/wrist'
 OUT = f'{W}/paper'
-MODELS = ['empatica', 'lgbm_q', 'net_q', 'raw_both']
+MODELS = ['empatica', 'lgbm_5m', 'raw_5m']
 CHILD = os.environ.get('WRIST_CHILDREN', f'{P}/children.csv')  # SPID, group4, age, male, asd, adhd
 
 
@@ -38,7 +38,7 @@ def splits():
     nights = E.groupby('name', sort=True).agg(SPID=('SPID', 'first'), family=('family_SPID', 'first'),
                                               lab=('lab', 'sum'), epochs=('epoch', 'size')).reset_index()
     nights['family'] = nights.family.fillna(nights.SPID)
-    folds = pd.read_parquet(f'{W}/baseline_pred_3h.parquet', columns=['name', 'fold']).drop_duplicates('name')
+    folds = pd.read_parquet(f'{W}/baseline_pred_quality_5st.parquet', columns=['name', 'fold']).drop_duplicates('name')
     nights = nights.merge(folds, on='name', how='left')
     rows = []
     for k in range(5):
@@ -90,7 +90,7 @@ def child_metrics(A, C):
     for spid, d in s.groupby('SPID'):
         if len(d) < 200:
             continue
-        for mod in ['lgbm_q', 'net_q', 'raw_both']:
+        for mod in ['lgbm_5m', 'raw_5m']:
             k = d[mod].notna()
             yt, yp = d.y[k].astype(int), d[mod][k].astype(int)
             rows.append(dict(SPID=spid, model=mod, epochs=len(yt), kappa=cohen_kappa_score(yt, yp),
@@ -100,9 +100,9 @@ def child_metrics(A, C):
 
 
 def night_errors(A, C):
-    _, N = score(A, ['empatica', 'lgbm_q', 'raw_both'], max_epoch=10**6)
+    _, N = score(A, ['empatica', 'lgbm_5m', 'raw_5m'], max_epoch=10**6)
     rows = []
-    for mod in ['empatica', 'lgbm_q', 'raw_both']:
+    for mod in ['empatica', 'lgbm_5m', 'raw_5m']:
         for key in ['WASO', 'n_awak', 'TST']:
             d = N[['name', 'SPID', f'{key}_y', f'{key}_{mod}']].dropna()
             rows.append(pd.DataFrame(dict(name=d.name, SPID=d.SPID, model=mod, measure=key,
@@ -135,7 +135,7 @@ def main():
     print(S.groupby('set')[['nights', 'children', 'families', 'labelled_hours']].mean().round(0))
     print('total', len(nights), 'nights', nights.SPID.nunique(), 'children', nights.family.nunique(), 'families')
 
-    A = pd.read_parquet(f'{W}/all_models_pred.parquet')
+    A = pd.read_parquet(f'{W}/eval_pred.parquet')
     M, CM = stage_metrics(A)
     M.to_csv(f'{OUT}/stage_metrics.csv', index=False)
     CM.to_csv(f'{OUT}/confusion_reliable.csv', index=False)

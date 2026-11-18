@@ -38,7 +38,8 @@ W = f'{P}/wrist'
 OUT = os.environ.get('WRIST_EXPORT', 'scored_nights')
 CHILD = os.environ.get('WRIST_CHILDREN', f'{P}/children.csv')  # SPID, group4, age, male, asd, adhd
 DREEM5 = {0: 'Wake', 1: 'REM', 2: 'N1', 3: 'N2', 4: 'N3'}
-PC = [f'p_{c}' for c in NAMES]
+NAMES5 = ['Wake', 'N1', 'N2', 'N3', 'REM']
+PC = [f'p_{c}' for c in NAMES5]                 # 5-stage network probabilities
 MEASURES = [('TST', 'Total sleep time (min)'), ('SOL', 'Sleep onset latency (min)'), ('WASO', 'WASO (min)'),
             ('n_awak', 'Awakenings (n)'), ('pct_Light', 'Light sleep (% of sleep)'),
             ('pct_N3', 'N3 (% of sleep)'), ('pct_REM', 'REM (% of sleep)')]
@@ -46,23 +47,24 @@ STAGE_COL = {'Wake': '#E8962E', 'Light': '#7FA7D9', 'N3': '#3D3B8E', 'REM': '#B5
 
 
 def load():
-    A = pd.read_parquet(f'{W}/all_models_pred.parquet',
-                        columns=['SPID', 'name', 'date', 'epoch', 'stage', 'y', 'empatica', 'mask_quality', 'raw_both'])
-    R = pd.concat([pd.read_parquet(f, columns=['name', 'epoch'] + PC)
-                   for f in sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_both_fold?.parquet'))])
+    A = pd.read_parquet(f'{W}/eval_pred.parquet',
+                        columns=['SPID', 'name', 'date', 'epoch', 'stage', 'y', 'empatica', 'mask_quality', 'raw_5m'])
+    R = pd.concat([pd.read_parquet(f, columns=['name', 'epoch', 'rawnet'] + PC)
+                   for f in sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet'))])
     T = pd.read_parquet(f'{W}/epochs.parquet', columns=['name', 'epoch', 't', 'emp_stage', 'wear'])
     D = A.merge(R, on=['name', 'epoch'], how='inner', validate='1:1').merge(T, on=['name', 'epoch'], how='left',
                                                                             validate='1:1')
     D = D.sort_values(['name', 'epoch']).reset_index(drop=True)
     D['dreem_stage5'] = D.stage.map(DREEM5)
     D['dreem_stage'] = D.y.map(dict(enumerate(NAMES)))
-    D['model_stage'] = D.raw_both.map(dict(enumerate(NAMES)))
+    D['model_stage'] = D.raw_5m.map(dict(enumerate(NAMES)))          # N1+N2 merged into Light
+    D['model_stage5'] = D.rawnet.map(dict(enumerate(NAMES5)))
     D['reliable_label'] = D.mask_quality.fillna(False).astype(bool)
     return D
 
 
 def export_nights(D):
-    cols = ['epoch', 't', 'dreem_stage5', 'dreem_stage', 'model_stage'] + PC + ['emp_stage', 'wear', 'reliable_label']
+    cols = ['epoch', 't', 'dreem_stage5', 'dreem_stage', 'model_stage5', 'model_stage'] + PC + ['emp_stage', 'wear', 'reliable_label']
     out = D[['SPID', 'name', 'date'] + cols].rename(columns={'t': 'time_local', 'emp_stage': 'empatica_sleep_code',
                                                           'wear': 'wear_pct'})
     out[PC] = out[PC].round(4)
@@ -77,18 +79,18 @@ def night_table(D):
     for name, g in D.groupby('name', sort=True):
         r = dict(name=name, SPID=g.SPID.iloc[0], date=g.date.iloc[0], start_local=g.t.iloc[0], epochs=len(g),
                  pct_scored=g.y.notna().mean() * 100)
-        for src, col in [('dreem', 'y'), ('model', 'raw_both')]:
+        for src, col in [('dreem', 'y'), ('model', 'raw_5m')]:
             for k, v in night_measures(g, col).items():
                 r[f'{k}_{src}'] = v
         both = g[g.y.notna()]
-        for src, col in [('dreem', 'y'), ('model', 'raw_both')]:
+        for src, col in [('dreem', 'y'), ('model', 'raw_5m')]:
             sl = both[col][both[col] > 0]
             for i, c in [(1, 'Light'), (2, 'N3'), (3, 'REM')]:
                 r[f'pct_{c}_{src}'] = (sl == i).mean() * 100 if len(sl) else np.nan
         if len(both) > 0:
-            r['kappa'] = cohen_kappa_score(both.y.astype(int), both.raw_both.astype(int), labels=[0, 1, 2, 3])
-            r['accuracy'] = accuracy_score(both.y.astype(int), both.raw_both.astype(int))
-            r['kappa_wake_sleep'] = cohen_kappa_score(both.y > 0, both.raw_both > 0)
+            r['kappa'] = cohen_kappa_score(both.y.astype(int), both.raw_5m.astype(int), labels=[0, 1, 2, 3])
+            r['accuracy'] = accuracy_score(both.y.astype(int), both.raw_5m.astype(int))
+            r['kappa_wake_sleep'] = cohen_kappa_score(both.y > 0, both.raw_5m > 0)
         rows.append(r)
     N = pd.DataFrame(rows)
     C = pd.read_csv(CHILD, usecols=['SPID', 'group4', 'age', 'male'])
@@ -130,7 +132,7 @@ def measure_agreement(N):
 def epoch_agreement(D):
     rows, cms = [], {}
     for sname, m in [('all scored epochs', D.y.notna()), ('reliable-label epochs', D.reliable_label & D.y.notna())]:
-        yt, yp = D.y[m].astype(int), D.raw_both[m].astype(int)
+        yt, yp = D.y[m].astype(int), D.raw_5m[m].astype(int)
         pr, rc, f1, sup = precision_recall_fscore_support(yt, yp, labels=[0, 1, 2, 3], zero_division=0)
         r = dict(epochs=len(yt), set=sname, kappa=cohen_kappa_score(yt, yp), accuracy=accuracy_score(yt, yp),
                  macro_F1=f1.mean(), wake_sleep_kappa=cohen_kappa_score(yt > 0, yp > 0))
@@ -248,12 +250,13 @@ def readme(D, N, E, S, path):
     L = [
         '# Wrist deep-net sleep scoring of the paired Dreem + Empatica nights', '',
         f'{N.name.nunique():,} nights from {N.SPID.nunique()} children, scored every 30 s by the raw-signal deep '
-        'network (raw pulse + motion + Empatica minute signals). Each night was scored by a model trained on other '
+        'network (raw pulse + motion + Empatica minute signals), trained on 5 stages (Wake, N1, N2, N3, REM); its '
+        '4-stage output is the same hypnogram with N1 and N2 merged into Light. Each night was scored by a model trained on other '
         'families only (5-fold cross-validation by family), so these are out-of-sample scores.', '',
         '## Files', '',
         '- `nights/<SPID>/<night>.csv`: one row per 30-s epoch: `time_local`, Dreem stage (`dreem_stage5`: Wake / '
-        'N1 / N2 / N3 / REM; `dreem_stage`: 4 classes, empty = unscored by Dreem), `model_stage`, model '
-        'probabilities `p_Wake … p_REM`, Empatica\'s own sleep code (0 awake, 101 sleep, 102 short WASO, 300 long '
+        'N1 / N2 / N3 / REM; `dreem_stage`: 4 classes, empty = unscored by Dreem), `model_stage5` (Wake / N1 / N2 / N3 / REM), `model_stage` '
+        '(4 classes, N1 + N2 = Light), 5-stage model probabilities `p_Wake, p_N1, p_N2, p_N3, p_REM`, Empatica\'s own sleep code (0 awake, 101 sleep, 102 short WASO, 300 long '
         'WASO), `wear_pct`, `reliable_label` (epoch in a reliable EEG stretch).',
         '- `all_epochs.parquet`: all nights in one table.',
         '- `night_measures.csv`: per night, Dreem and deep-net TST, SOL, WASO, awakenings, % Light / N3 / REM, '
@@ -289,10 +292,12 @@ def readme(D, N, E, S, path):
           'onset. Stage percentages are of sleep, on epochs scored by both.',
           '- Dreem leaves ~11% of epochs unscored early in the night and ~41% late, so Dreem itself is an imperfect '
           'reference late at night; that is why night measures use nights with ≥ 80% scored epochs.',
-          '- The deep net smooths over short (1–2 min) awakenings; for WASO and number of awakenings the LightGBM '
-          'model tracks Dreem better (within-child r 0.59 vs 0.44 for WASO).',
+          '- The deep net smooths over short (1–2 min) awakenings: it under-counts WASO (about 9 min) and '
+          'awakenings and over-counts TST. Night-to-night changes in WASO are tracked moderately (within-child r '
+          f"{S.set_index('key').loc['WASO', 'within_child_r']:.2f}).",
+          '- N1 is over-counted by the 5-stage model (see the paper); use N1 minutes as a relative index only.',
           '- Only the first 16 h of each recording are scored.', '',
-          'Generated by `Sleep_Onset_prediction_model/wrist/export_scored_nights.py`.']
+          'Generated by `training/evaluation/export_scored_nights.py`.']
     open(path, 'w').write('\n'.join(L))
 
 

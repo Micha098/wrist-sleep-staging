@@ -11,8 +11,9 @@ This notebook rebuilds every figure of the paper from the saved model prediction
 bottom. Each section says what the figure shows and how it is computed.
 
 **Inputs** (in the project data folder, `SOP_PROJ`; participant data are not public):
-- `wrist/all_models_pred.parquet`: one row per 30-s epoch with the Dreem stage (`y`), the reliable-label flag
-  (`mask_quality`), and the out-of-fold predictions of LightGBM (`lgbm_q`) and the deep network (`raw_both`);
+- `wrist/eval_pred.parquet`: one row per 30-s epoch with the Dreem stage (`y`), the reliable-label flag
+  (`mask_quality`), and the out-of-fold predictions of LightGBM (`lgbm_5m`) and the deep network (`raw_5m`): both models are trained on five
+  stages, and these columns are their hypnograms with N1 and N2 merged into Light (`training/merge_5stage.py`);
 - `wrist/baseline_pred_quality_5st.parquet` and `wrist/rawnet_pred/rawnet_pred_quality_5st_both_fold*.parquet`: the five-stage predictions;
 - `wrist/paper/child_metrics.csv` and `group_age_tests.csv`: per-child metrics and group regressions (`training/evaluation/paper_metrics.py`).
 
@@ -34,11 +35,11 @@ sys.path.insert(0, os.path.abspath('../training'))
 from baseline_lgbm import night_measures                  # the same night-measure definitions as the paper
 
 NAMES = ['Wake', 'Light', 'N3', 'REM']
-MODELS = {'lgbm_q': 'LightGBM', 'raw_both': 'Deep network'}
+MODELS = {'lgbm_5m': 'LightGBM', 'raw_5m': 'Deep network'}
 COL = {'LightGBM': '#9a9a9a', 'Deep network': '#2f6fd6'}
 plt.rcParams.update({'font.size': 10, 'axes.spines.top': False, 'axes.spines.right': False, 'figure.dpi': 110})
 
-A = pd.read_parquet(f'{P}/wrist/all_models_pred.parquet',
+A = pd.read_parquet(f'{P}/wrist/eval_pred.parquet',
                     columns=['SPID', 'name', 'date', 'epoch', 'y', 'mask_quality'] + list(MODELS)).sort_values(['name', 'epoch'])
 A['reliable'] = A.mask_quality.fillna(False).astype(bool) & A.y.notna()
 print(f"{A.name.nunique():,} nights, {A.SPID.nunique()} children, {len(A):,} epochs, "
@@ -52,7 +53,7 @@ code("""boxes = [  # (x, y, w, label, highlight)
     (0.02, 0.86, 0.46, 'Dreem EEG headband\\nautomatic 30-s stages', False),
     (0.52, 0.86, 0.46, 'Empatica wristband\\nminute signals; raw pulse + motion (64 Hz)', False),
     (0.15, 0.70, 0.70, 'Align on 30-s epochs\\n1,977 nights worn >= 80% of the night', False),
-    (0.02, 0.54, 0.46, 'Reliable-stretch labels\\n10 min: <= 20% unscored, <= 30% noisy', False),
+    (0.02, 0.54, 0.46, 'Reliable-stretch labels (5 stages)\\n10 min: <= 20% unscored, <= 30% noisy', False),
     (0.52, 0.54, 0.46, 'Wrist inputs\\n9 minute signals; raw 5 x 960 per epoch', False),
     (0.02, 0.38, 0.46, 'LightGBM (baseline)\\n39 hand-crafted features', False),
     (0.52, 0.38, 0.46, 'Deep network\\nCNN encoder > TCN > transformer', True),
@@ -222,15 +223,15 @@ md("""## Figure 8. Example nights
 
 Hypnograms of three nights at the 10th, 50th and 90th percentile of the deep network's per-night kappa (nights with
 >= 80% scored), with Dreem (top trace), the deep network and LightGBM.""")
-code("""kap = {name: cohen_kappa_score(g.y.astype(int), g.raw_both.astype(int), labels=range(4))
-       for name, g in A[A.name.isin(G.name)].dropna(subset=['y', 'raw_both']).groupby('name')}
+code("""kap = {name: cohen_kappa_score(g.y.astype(int), g.raw_5m.astype(int), labels=range(4))
+       for name, g in A[A.name.isin(G.name)].dropna(subset=['y', 'raw_5m']).groupby('name')}
 kap = pd.Series(kap).sort_values()
 pick = [kap.index[int(q * (len(kap) - 1))] for q in (0.1, 0.5, 0.9)]
 level = {0: 3, 3: 2, 1: 1, 2: 0}  # Wake, REM, Light, N3 from top to bottom
 fig, axs = plt.subplots(3, 1, figsize=(12, 7.5))
 for ax, name, q in zip(axs, pick, ['10th', '50th', '90th']):
     g = A[A.name == name]; h = g.epoch / 120
-    for col, off, lab, c in [('y', 0.16, 'Dreem', 'black'), ('raw_both', 0, 'Deep network', COL['Deep network']), ('lgbm_q', -0.16, 'LightGBM', '#e8962e')]:
+    for col, off, lab, c in [('y', 0.16, 'Dreem', 'black'), ('raw_5m', 0, 'Deep network', COL['Deep network']), ('lgbm_5m', -0.16, 'LightGBM', '#e8962e')]:
         ax.step(h, g[col].map(level) + off, where='post', lw=1, color=c, label=lab)
     ax.set_yticks([0, 1, 2, 3], ['N3', 'Light', 'REM', 'Wake']); ax.set_xlim(0, h.max())
     ax.set_title(f'{q} percentile night: deep-network kappa {kap[name]:.2f}', fontsize=10)
