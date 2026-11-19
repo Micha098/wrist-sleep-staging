@@ -14,7 +14,7 @@ bottom. Each section says what the figure shows and how it is computed.
 - `wrist/eval_pred.parquet`: one row per 30-s epoch with the Dreem stage (`y`), the reliable-label flag
   (`mask_quality`), and the out-of-fold predictions of LightGBM (`lgbm_5m`) and the deep network (`raw_5m`): both models are trained on five
   stages, and these columns are their hypnograms with N1 and N2 merged into Light (`training/merge_5stage.py`);
-- `wrist/baseline_pred_quality_5st.parquet` and `wrist/rawnet_pred/rawnet_pred_quality_5st_both_fold*.parquet`: the five-stage predictions;
+- `wrist/baseline_pred_quality_5st.parquet` and `wrist/rawnet_pred/rawnet_pred_quality_5st_raw_fold*.parquet`: the five-stage predictions;
 - `wrist/paper/child_metrics.csv` and `group_age_tests.csv`: per-child metrics and group regressions (`training/evaluation/paper_metrics.py`).
 
 All predictions are out-of-fold: each night was scored by a model trained on other families only.""")
@@ -48,13 +48,14 @@ print(f"{A.name.nunique():,} nights, {A.SPID.nunique()} children, {len(A):,} epo
 md("""## Figure 1. Analysis pipeline
 
 A schematic of the steps in Methods: both devices are aligned on 30-s epochs, reliable EEG stretches give the labels,
-both models get the same labels, minute signals and family folds, and only the deep network also reads raw pulse and motion.""")
+both models get the same labels and family folds; LightGBM reads Empatica's minute signals, the deep network raw pulse
+and motion plus time of night.""")
 code("""boxes = [  # (x, y, w, label, highlight)
     (0.02, 0.86, 0.46, 'Dreem EEG headband\\nautomatic 30-s stages', False),
     (0.52, 0.86, 0.46, 'Empatica wristband\\nminute signals; raw pulse + motion (64 Hz)', False),
     (0.15, 0.70, 0.70, 'Align on 30-s epochs\\n1,977 nights worn >= 80% of the night', False),
     (0.02, 0.54, 0.46, 'Reliable-stretch labels (5 stages)\\n10 min: <= 20% unscored, <= 30% noisy', False),
-    (0.52, 0.54, 0.46, 'Wrist inputs\\n9 minute signals; raw 5 x 960 per epoch', False),
+    (0.52, 0.54, 0.46, 'Wrist inputs\\nLightGBM: 9 minute signals\\ndeep net: raw pulse + motion, time of night', False),
     (0.02, 0.38, 0.46, 'LightGBM (baseline)\\n39 hand-crafted features', False),
     (0.52, 0.38, 0.46, 'Deep network\\nCNN encoder > TCN > transformer', True),
     (0.15, 0.22, 0.70, '5-fold cross-validation by family\\nfit / validation / test families', False),
@@ -175,7 +176,7 @@ The same models retrained with five classes. Left: F1 per stage on reliable epoc
 code("""N5 = ['Wake', 'N1', 'N2', 'N3', 'REM']
 B5 = pd.read_parquet(f'{P}/wrist/baseline_pred_quality_5st.parquet', columns=['name', 'epoch', 'y', 'mask_quality', 'lgbm'])
 R5 = pd.concat([pd.read_parquet(f, columns=['name', 'epoch', 'rawnet'])
-                for f in sorted(glob.glob(f'{P}/wrist/rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet'))])
+                for f in sorted(glob.glob(f'{P}/wrist/rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet'))])
 D5 = B5.merge(R5, on=['name', 'epoch'])
 D5 = D5[D5.mask_quality & D5.y.notna()]
 fig, axs = plt.subplots(1, 2, figsize=(12, 4.2), gridspec_kw=dict(width_ratios=[1.4, 1]))

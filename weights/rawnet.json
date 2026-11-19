@@ -6,6 +6,7 @@
   "N3",
   "REM"
  ],
+ "input": "raw",
  "inputs": [
   "act",
   "steps",
@@ -39,8 +40,8 @@
   1.3600006103515625,
   4.916666507720947
  ],
- "best_epoch": 9,
- "val_loss": 0.5770118865565238,
+ "best_epoch": 16,
+ "val_loss": 0.5761348568858616,
  "n_fit_nights": 1617,
  "n_val_nights": 360
 }

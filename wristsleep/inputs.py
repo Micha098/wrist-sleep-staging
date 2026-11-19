@@ -26,16 +26,20 @@ NET_INPUTS = SIG + ['hr_rel', 'temp_rel', 'pos_h']  # order used in training
 
 def epoch_table(minutes, start, end):
     """One row per 30-s epoch with that epoch's minute values. `minutes`: DataFrame with `timestamp_unix`
-    (seconds or milliseconds) and Empatica's per-minute columns."""
+    (seconds or milliseconds) and Empatica's per-minute columns, or None (then only epoch and time; the signals are
+    missing)."""
     n = int(min((end - start) // EPOCH_S, MAX_EPOCHS))
     if n < 1:
         raise ValueError('night shorter than one epoch')
     t = start + EPOCH_S * np.arange(n)
+    E = pd.DataFrame({'epoch': np.arange(n), 't': t})
+    if minutes is None:
+        E[SIG + ['wear']] = np.nan
+        return E
     m = minutes.rename(columns=MINUTE_COLS).copy()
     ts = m.timestamp_unix.astype(float)
     m['minute'] = np.floor(np.where(ts > 1e11, ts / 1000, ts) / 60).astype(np.int64)
     m = m.drop_duplicates('minute').set_index('minute')
-    E = pd.DataFrame({'epoch': np.arange(n), 't': t})
     for c in SIG + ['wear']:
         E[c] = m[c].reindex(np.floor(t / 60).astype(np.int64)).to_numpy(dtype=float) if c in m else np.nan
     return E

@@ -4,8 +4,8 @@ Wrist-only sleep model, step 4: raw-signal network (raw BVP + ACC) on the cluste
 Input  : per 30-s epoch
            raw    cache/raw_pack/raw.npy (prep/pack_raw.py): 5 x 960 samples (32 Hz BVP, ACC x/y/z, missing flag)
            minute minute_inputs.py (minute signals, missing flags, worn), scaled as there
-         RAWNET_INPUT = both (default) | raw (raw signals + hours since recording start only, to test what the
-         Empatica minute signals add; time of night is kept, as it is not a wristband signal).
+         RAWNET_INPUT = raw (default, the released model: raw signals + hours since recording start) | both (also all
+         Empatica minute signals; the earlier release). Time of night is kept in both, as it is not a wristband signal.
            extra  RAWNET_EXTRA = comma list of slow raw signals added to the epoch encoder: temp, eda
                   (cache/raw_pack/<signal>.npy, prep/pack_slow.py; each repeated to 960 samples, + a missing flag)
 Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with the minute inputs ->
@@ -37,7 +37,7 @@ torch.backends.cudnn.enabled = True
 FOLD = int(os.environ.get('RAWNET_FOLD', os.environ.get('SLURM_ARRAY_TASK_ID', '0')))
 SEED = int(os.environ.get('RAWNET_SEED', '0'))
 MAX_EPOCHS = int(os.environ.get('RAWNET_MAX_EPOCHS', '30'))
-INPUT = os.environ.get('RAWNET_INPUT', 'both')
+INPUT = os.environ.get('RAWNET_INPUT', 'raw')
 EXTRA = [s for s in os.environ.get('RAWNET_EXTRA', '').split(',') if s]
 assert INPUT in ('both', 'raw') and set(EXTRA) <= {'temp', 'eda'}, (INPUT, EXTRA)
 C_RAW = 5 + 2 * len(EXTRA)  # each extra signal + its missing flag

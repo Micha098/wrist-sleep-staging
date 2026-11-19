@@ -46,8 +46,10 @@ def test_score_night_end_to_end():
     if not os.path.exists(WEIGHTS / 'rawnet.pt'):
         pytest.skip('weights not present')
     minutes, bvp, acc = synthetic()
-    ep, s = Scorer().score_night(minutes, START, START + HOURS * 3600, bvp=bvp, acc=acc)
+    ep, s = Scorer().score_night(START, START + HOURS * 3600, bvp=bvp, acc=acc, minutes=minutes)
     assert len(ep) == HOURS * 120 and set(ep.stage) <= {'Wake', 'Light', 'N3', 'REM'}
     assert set(ep.stage5) <= {'Wake', 'N1', 'N2', 'N3', 'REM'}
     assert ((ep.stage == 'Light') == ep.stage5.isin(['N1', 'N2'])).all()   # 4 stages = 5 stages with N1+N2 merged
     assert 0 <= s['net_TST_min'] <= HOURS * 60 and 'lgbm_WASO_min' in s
+    ep2, s2 = Scorer().score_night(START, START + HOURS * 3600, bvp=bvp, acc=acc)  # raw signals only
+    assert (ep2.stage5 == ep.stage5).all() and 'lgbm_WASO_min' not in s2

@@ -2,7 +2,7 @@
 Wrist-only sleep model, step 7: export the deep-net (raw-signal network) scoring of every paired night, and its
 agreement with Dreem.
 
-Predictions: rawnet both inputs, quality labels, held-out family folds (each night scored by a model that never saw
+Predictions: rawnet raw inputs (raw pulse + motion + time of night), quality labels, held-out family folds (each night scored by a model that never saw
 that family). Nights: the 1,977 Dreem + Empatica nights (wristband worn >= 80 %), first 16 h.
 
 Output folder (OUT):
@@ -50,7 +50,7 @@ def load():
     A = pd.read_parquet(f'{W}/eval_pred.parquet',
                         columns=['SPID', 'name', 'date', 'epoch', 'stage', 'y', 'empatica', 'mask_quality', 'raw_5m'])
     R = pd.concat([pd.read_parquet(f, columns=['name', 'epoch', 'rawnet'] + PC)
-                   for f in sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet'))])
+                   for f in sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet'))])
     T = pd.read_parquet(f'{W}/epochs.parquet', columns=['name', 'epoch', 't', 'emp_stage', 'wear'])
     D = A.merge(R, on=['name', 'epoch'], how='inner', validate='1:1').merge(T, on=['name', 'epoch'], how='left',
                                                                             validate='1:1')
@@ -250,7 +250,7 @@ def readme(D, N, E, S, path):
     L = [
         '# Wrist deep-net sleep scoring of the paired Dreem + Empatica nights', '',
         f'{N.name.nunique():,} nights from {N.SPID.nunique()} children, scored every 30 s by the raw-signal deep '
-        'network (raw pulse + motion + Empatica minute signals), trained on 5 stages (Wake, N1, N2, N3, REM); its '
+        'network (raw pulse + motion + time of night), trained on 5 stages (Wake, N1, N2, N3, REM); its '
         '4-stage output is the same hypnogram with N1 and N2 merged into Light. Each night was scored by a model trained on other '
         'families only (5-fold cross-validation by family), so these are out-of-sample scores.', '',
         '## Files', '',

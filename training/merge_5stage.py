@@ -6,7 +6,7 @@ Both models are trained on five stages (Wake, N1, N2, N3, REM). Their four-stage
 accuracy equals that of a separately trained 4-stage model (reliable kappa .709 vs .713).
 
 Input : baseline_pred_quality_5st.parquet (labels, masks, Empatica code, LightGBM out-of-fold predictions)
-        rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet (deep-network out-of-fold predictions)
+        rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet (deep-network out-of-fold predictions)
 Output: wrist/eval_pred.parquet, one row per 30-s epoch: SPID, name, date, epoch, stage (Dreem code), y (4-class Dreem
         label), mask_quality, empatica, lgbm_5m and raw_5m (4-class predictions), lgbm_5 and raw_5 (5-class)
 """
@@ -24,7 +24,7 @@ MERGE = {0: 0, 1: 1, 2: 1, 3: 2, 4: 3}        # Wake, N1, N2, N3, REM -> Wake, L
 def main():
     B = pd.read_parquet(f'{W}/baseline_pred_quality_5st.parquet',
                         columns=['SPID', 'name', 'date', 'epoch', 'stage', 'y', 'mask_quality', 'empatica', 'lgbm'])
-    fs = sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet'))
+    fs = sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet'))
     assert len(fs) == 5
     R = pd.concat([pd.read_parquet(f, columns=['name', 'epoch', 'rawnet']) for f in fs])
     A = B.rename(columns={'lgbm': 'lgbm_5', 'y': 'y5'}).merge(R.rename(columns={'rawnet': 'raw_5'}), on=['name', 'epoch'],

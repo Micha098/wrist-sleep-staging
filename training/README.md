@@ -10,13 +10,13 @@ scripts from this folder (`cd training`), so they can import each other.
 | 2. Reference labels | `build_label_masks.py` | Dreem stages + EEG quality markers (`cache/eeg_quality.parquet`) -> `wrist/label_masks.parquet` (reliable 10-min stretches) |
 | 3. Raw signals | `prep/cut_bvp_nights.py`, `prep/cut_acc_nights.py`, `prep/pack_raw.py` | raw 64 Hz CSVs -> per-night 32 Hz arrays -> `cache/raw_pack/raw.npy` [epochs, 5, 960] |
 | 4. LightGBM | `baseline_lgbm.py` | `WRIST_LABELS=quality` -> out-of-fold predictions `wrist/baseline_pred_quality_5st.parquet` |
-| 5. Deep network | `rawnet.py` via `rawnet.sbatch` (one family fold per GPU job) | `sbatch --array=0-4 rawnet.sbatch` -> `wrist/rawnet_pred/rawnet_pred_quality_5st_both_fold<k>.parquet`; per-minute inputs and their scaling come from `minute_inputs.py` |
+| 5. Deep network | `rawnet.py` via `rawnet.sbatch` (one family fold per GPU job) | `sbatch --array=0-4 rawnet.sbatch` -> `wrist/rawnet_pred/rawnet_pred_quality_5st_raw_fold<k>.parquet`; time of night and its scaling come from `minute_inputs.py` |
 | 5b. Four stages | `merge_5stage.py` | joins labels and both models' out-of-fold predictions; N1 + N2 merged into Light -> `wrist/eval_pred.parquet` (used by all evaluation scripts and the figures notebook) |
-| 6. Final models | `train_final_lgbm.py`; `rawnet.py` with `RAWNET_FOLD=-1`; `export_weights.py` | all families, 20% for early stopping -> `wrist/lgbm_final_quality_5st.txt`, `wrist/rawnet_final_quality_5st_both.pt` -> `weights/` |
+| 6. Final models | `train_final_lgbm.py`; `rawnet.py` with `RAWNET_FOLD=-1`; `export_weights.py` | all families, 20% for early stopping -> `wrist/lgbm_final_quality_5st.txt`, `wrist/rawnet_final_quality_5st_raw.pt` -> `weights/` |
 | 7. Evaluation | `evaluation/paper_metrics.py`, `evaluation/paper_tables.py`, `evaluation/score_5stage.py`, `evaluation/export_scored_nights.py` | out-of-fold predictions -> `wrist/paper/*.csv` (all tables of the paper) |
 
 Environment variables: `SOP_PROJ` (data folder), `WRIST_LABELS` (`quality` = reliable stretches, used for the paper),
-`RAWNET_FOLD`, `RAWNET_INPUT` (`both` = raw signals + minute values, the released model | `raw` = raw pulse and motion only ), `RAWNET_EXTRA` (extra slow raw signals for the epoch encoder: `temp`, `eda`; needs `prep/pack_slow.py`), `RAWNET_SEED`, `RAWNET_MAX_EPOCHS`,
+`RAWNET_FOLD`, `RAWNET_INPUT` (`raw` = raw pulse and motion + time of night, the released model | `both` = also Empatica's minute values), `RAWNET_EXTRA` (extra slow raw signals for the epoch encoder: `temp`, `eda`; needs `prep/pack_slow.py`), `RAWNET_SEED`, `RAWNET_MAX_EPOCHS`,
 `WRIST_CHILDREN` (CSV with SPID, group4, age, male, asd, adhd for the group analyses).
 
 Folds: families are assigned to 5 folds at random (`baseline_lgbm.family_folds`, seed 0); both models use the same test

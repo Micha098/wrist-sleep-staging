@@ -1,7 +1,7 @@
 """
 Wrist-only sleep model: score the 5-stage models (Wake, N1, N2, N3, REM) against Dreem.
 
-Models : lgbm (baseline_pred_quality_5st.parquet) and the raw-signal network (rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet)
+Models : lgbm (baseline_pred_quality_5st.parquet) and the raw-signal network (rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet)
 Scores : per-stage precision / recall / F1, macro F1, kappa, row-% confusion matrices on reliable-label epochs and on all
          scored epochs; per-night minutes of N1 and N2 (and % of sleep) vs Dreem on nights with >= 80 % scored epochs
          (r, within-child r, bias), stage percentages on epochs scored by both.
@@ -24,7 +24,7 @@ PC = [f'p_{c}' for c in NAMES]
 def load():
     B = pd.read_parquet(f'{W}/baseline_pred_quality_5st.parquet',
                         columns=['SPID', 'name', 'epoch', 'y', 'mask_quality', 'lgbm'])
-    fs = sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet'))
+    fs = sorted(glob.glob(f'{W}/rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet'))
     assert len(fs) == 5, f'{len(fs)} rawnet folds'
     R = pd.concat([pd.read_parquet(f, columns=['name', 'epoch', 'rawnet']) for f in fs])
     D = B.merge(R, on=['name', 'epoch'], how='inner', validate='1:1').sort_values(['name', 'epoch'])

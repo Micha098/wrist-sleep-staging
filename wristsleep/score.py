@@ -1,8 +1,9 @@
 """
 Score Empatica nights with the released models.
 
-  deep network (raw pulse + motion + minute signals) -> sleep stages per 30-s epoch (the recommended output)
-  LightGBM (minute signals)                          -> the baseline model of the paper
+  deep network (raw pulse + motion + time of night) -> sleep stages per 30-s epoch (the recommended output)
+  LightGBM (Empatica per-minute signals)            -> the baseline model of the paper (only when the per-minute
+                                                       file is given)
 
 Both models are trained on five stages (Wake, N1, N2, N3, REM). The four-stage output (Wake, Light, N3, REM) is the
 same hypnogram with N1 and N2 merged into Light.
@@ -10,9 +11,9 @@ same hypnogram with N1 and N2 merged into Light.
 Python:
     from wristsleep.score import Scorer
     sc = Scorer()
-    epochs, summary = sc.score_night(minutes, start, end, bvp=bvp, acc=acc)
+    epochs, summary = sc.score_night(start, end, bvp=bvp, acc=acc, minutes=None)
 
-Command line (one row per night in nights.csv: night_id, minutes_csv, bvp_csv, acc_csv, start, end):
+Command line (one row per night in nights.csv: night_id, bvp_csv, acc_csv, start, end, and optionally minutes_csv):
     python -m wristsleep.score nights.csv --out results/
 """
 import argparse
@@ -48,7 +49,8 @@ class Scorer:
         meta = json.load(open(Path(weights_dir) / 'rawnet.json'))  # classes + input scaling of the fit set
         self.names = meta['names']
         self.med, self.iqr = np.asarray(meta['med']), np.asarray(meta['iqr'])
-        self.net = RawNet(c_min=19, n_cls=len(self.names))
+        self.input = meta.get('input', 'both')
+        self.net = RawNet(c_min=1 if self.input == 'raw' else 19, n_cls=len(self.names))
         self.net.load_state_dict(torch.load(Path(weights_dir) / 'rawnet.pt', map_location='cpu', weights_only=True))
         self.net.eval().to(device)
         self.device = device
@@ -59,13 +61,18 @@ class Scorer:
             self.lgbm = lgb.Booster(model_file=str(f))
             self.lgbm_features = json.load(open(Path(weights_dir) / 'lgbm.json'))['features']
 
-    def score_night(self, minutes, start, end, bvp=None, acc=None):
-        """minutes: Empatica per-minute DataFrame; bvp: DataFrame (time, bvp); acc: DataFrame (time, x, y, z) in g;
-        start/end: bedtime and rise time (Unix seconds or time strings with an offset).
-        Returns (epochs DataFrame, night summary dict)."""
+    def score_night(self, start, end, bvp=None, acc=None, minutes=None):
+        """start/end: bedtime and rise time (Unix seconds or time strings with an offset); bvp: DataFrame (time, bvp);
+        acc: DataFrame (time, x, y, z) in g; minutes: Empatica per-minute DataFrame (optional; needed for LightGBM and
+        for Empatica's wear detection). Returns (epochs DataFrame, night summary dict)."""
+        if self.input == 'raw' and bvp is None and acc is None:
+            raise ValueError('the deep network needs the raw pulse and/or accelerometer data')
         start, end = to_unix(start), to_unix(end)
         E = epoch_table(minutes, start, end)
-        z = torch.from_numpy(network_minute_inputs(E, self.med, self.iqr))[None]
+        z = network_minute_inputs(E, self.med, self.iqr)
+        if self.input == 'raw':
+            z = z[:, [len(self.med) - 1]]  # scaled hours since the start of the night (last input)
+        z = torch.from_numpy(z)[None]
         r = torch.from_numpy(raw_epochs(bvp, acc, start, len(E))).float()[None]
         pad = torch.zeros(1, len(E), dtype=torch.bool)
         with torch.no_grad():
@@ -79,13 +86,13 @@ class Scorer:
         summary = {f'net_{k}': v for k, v in night_measures(s5, self.names).items()}   # TST/SOL/WASO + N1..REM
         summary['net_Light_min'] = summary['net_N1_min'] + summary['net_N2_min']
         summary['net_Light_pct_of_sleep'] = summary['net_N1_pct_of_sleep'] + summary['net_N2_pct_of_sleep']
-        if self.lgbm is not None:
+        if self.lgbm is not None and minutes is not None:
             F = lgbm_features(E)[self.lgbm_features]
             l5 = self.lgbm.predict(F).argmax(1)
             out['stage_lgbm'] = np.array(NAMES4)[MERGE[l5]]
             m = night_measures(l5, self.names)
             summary.update({f'lgbm_{k}': m[k] for k in ['TST_min', 'SOL_min', 'WASO_min', 'awakenings']})
-        worn = (E.wear >= 50).mean()
+        worn = (E.wear >= 50).mean() if minutes is not None else 1 - float(r[0, :, 4].mean())
         summary.update(epochs=len(E), worn_fraction=round(float(worn), 3),
                        raw_missing_fraction=round(float(r[0, :, 4].mean()), 3))
         if worn < 0.8:
@@ -99,14 +106,15 @@ def _read(path):
 
 def main():
     ap = argparse.ArgumentParser(description='Score Empatica nights (see README).')
-    ap.add_argument('nights', help='CSV: night_id, minutes_csv, bvp_csv, acc_csv, start, end')
+    ap.add_argument('nights', help='CSV: night_id, bvp_csv, acc_csv, start, end [, minutes_csv]')
     ap.add_argument('--out', default='results')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     sc = Scorer()
     rows = []
     for n in pd.read_csv(a.nights).itertuples():
-        ep, s = sc.score_night(pd.read_csv(n.minutes_csv), n.start, n.end, bvp=_read(n.bvp_csv), acc=_read(n.acc_csv))
+        ep, s = sc.score_night(n.start, n.end, bvp=_read(n.bvp_csv), acc=_read(n.acc_csv),
+                               minutes=_read(getattr(n, 'minutes_csv', None)))
         ep.to_csv(f'{a.out}/{n.night_id}_epochs.csv', index=False)
         rows.append(dict(night_id=n.night_id, **s))
         print(f'{n.night_id}: TST {s["net_TST_min"]:.0f} min, SOL {s["net_SOL_min"]}, '

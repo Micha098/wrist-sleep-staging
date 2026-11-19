@@ -34,8 +34,9 @@ class ResTCN(nn.Module):
 
 
 class RawNet(nn.Module):
-    """Epoch encoder (raw pulse + motion) + minute inputs -> dilated temporal CNN (~+-30 min) -> transformer over the
-    night -> stage logits per epoch."""
+    """Epoch encoder (raw pulse + motion) + per-epoch inputs -> dilated temporal CNN (~+-30 min) -> transformer over the
+    night -> stage logits per epoch. Per-epoch inputs: the scaled hours since the start of the night only (c_min=1,
+    the released model), or all 19 minute inputs (c_min=19, training option RAWNET_INPUT=both)."""
 
     def __init__(self, c_min=19, n_cls=4, d=128, use_raw=True, use_minute=True):
         super().__init__()
