@@ -16,7 +16,7 @@ scripts from this folder (`cd training`), so they can import each other.
 | 7. Evaluation | `evaluation/paper_metrics.py`, `evaluation/paper_tables.py`, `evaluation/score_5stage.py`, `evaluation/export_scored_nights.py` | out-of-fold predictions -> `wrist/paper/*.csv` (all tables of the paper) |
 
 Environment variables: `SOP_PROJ` (data folder), `WRIST_LABELS` (`quality` = reliable stretches, used for the paper),
-`RAWNET_FOLD`, `RAWNET_INPUT` (`both` = raw signals + minute values, the released model | `raw` = raw pulse and motion only | `raw_temp` = raw pulse, motion and skin temperature; needs `prep/pack_temp.py`), `RAWNET_SEED`, `RAWNET_MAX_EPOCHS`,
+`RAWNET_FOLD`, `RAWNET_INPUT` (`both` = raw signals + minute values, the released model | `raw` = raw pulse and motion only ), `RAWNET_EXTRA` (extra slow raw signals for the epoch encoder: `temp`, `eda`; needs `prep/pack_slow.py`), `RAWNET_SEED`, `RAWNET_MAX_EPOCHS`,
 `WRIST_CHILDREN` (CSV with SPID, group4, age, male, asd, adhd for the group analyses).
 
 Folds: families are assigned to 5 folds at random (`baseline_lgbm.family_folds`, seed 0); both models use the same test
