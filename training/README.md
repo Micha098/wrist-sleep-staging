@@ -7,7 +7,7 @@ scripts from this folder (`cd training`), so they can import each other.
 | Step | Script | Input -> output |
 |---|---|---|
 | 1. Epoch table | `build_epochs.py` | Dreem hypnograms + Empatica per-minute data -> `wrist/epochs.parquet` (one row per 30-s epoch on nights worn >= 80%) |
-| 2. Reference labels | `build_label_masks.py` | Dreem stages + EEG quality markers (`cache/eeg_quality.parquet`) -> `wrist/label_masks.parquet` (reliable 10-min stretches) |
+| 2. Reference labels | `prep/extract_power_filter_features.py`, `build_label_masks.py` | Dreem stages + EEG quality markers (`cache/eeg_quality.parquet`) + SSP power-filter features (`cache/eeg_power_filter_features.parquet`) -> `wrist/label_masks.parquet` (reliable 10-min stretches; noisy = power filter, 20-40 Hz power, ±500 µV or top-10% beta on F7-O1 or F8-O2). The cluster jobs read their own copy of `wrist/label_masks.parquet`: copy it to the cluster project folder after rebuilding |
 | 3. Raw signals | `prep/cut_bvp_nights.py`, `prep/cut_acc_nights.py`, `prep/pack_raw.py` | raw 64 Hz CSVs -> per-night 32 Hz arrays -> `cache/raw_pack/raw.npy` [epochs, 5, 960] |
 | 4. LightGBM | `baseline_lgbm.py` | `WRIST_LABELS=quality` -> out-of-fold predictions `wrist/baseline_pred_quality_5st.parquet` |
 | 5. Deep network | `rawnet.py` via `rawnet.sbatch` (one family fold per GPU job) | `sbatch --array=0-4 rawnet.sbatch` -> `wrist/rawnet_pred/rawnet_pred_quality_5st_raw_fold<k>.parquet`; time of night and its scaling come from `minute_inputs.py` |
