@@ -4,7 +4,8 @@ Wrist-only sleep model, step 4: raw-signal network (raw BVP + ACC) on the cluste
 Input  : per 30-s epoch
            raw    cache/raw_pack/raw.npy (prep/pack_raw.py): 5 x 960 samples (32 Hz BVP, ACC x/y/z, missing flag)
            minute minute_inputs.py (minute signals, missing flags, worn), scaled as there
-         RAWNET_INPUT = both (default) | raw (raw signals only, to test what the minute inputs add).
+         RAWNET_INPUT = both (default) | raw (raw signals only, to test what the minute inputs add) | raw_temp (raw
+         signals + 1-Hz skin temperature from cache/raw_pack/temp.npy, prep/pack_temp.py; no minute inputs).
 Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with the minute inputs ->
          residual dilated temporal CNN over epochs (dilations 1-16, ~ +-1 h) -> 2-layer transformer encoder over
          the night -> 5 classes per epoch (Wake, N1, N2, N3, REM).
@@ -35,7 +36,8 @@ FOLD = int(os.environ.get('RAWNET_FOLD', os.environ.get('SLURM_ARRAY_TASK_ID', '
 SEED = int(os.environ.get('RAWNET_SEED', '0'))
 MAX_EPOCHS = int(os.environ.get('RAWNET_MAX_EPOCHS', '30'))
 INPUT = os.environ.get('RAWNET_INPUT', 'both')
-assert INPUT in ('both', 'raw'), INPUT
+assert INPUT in ('both', 'raw', 'raw_temp'), INPUT
+C_RAW = 7 if INPUT == 'raw_temp' else 5  # + temperature and its missing flag
 BS = int(os.environ.get('RAWNET_BS', '8'))
 CROP = 960  # 8 h training crops
 PATIENCE = 5
@@ -74,7 +76,7 @@ class ResTCN(nn.Module):
 class RawNet(nn.Module):
     def __init__(self, c_min, d=128, n_cls=len(NAMES)):
         super().__init__()
-        self.enc = Encoder(d=64)
+        self.enc = Encoder(c_in=C_RAW, d=64)
         c_in = 64 + (c_min if INPUT == 'both' else 0)
         self.inp = nn.Linear(c_in, d)
         self.tcn = nn.Sequential(*[ResTCN(d, k) for k in [1, 2, 4, 8, 16]])
@@ -104,6 +106,11 @@ def main():
     assert (idx.n.to_numpy() == L).all(), 'raw pack and minute arrays disagree on night length'
     rows = idx.row.to_numpy()
     raw = torch.from_numpy(np.load(f'{P}/cache/raw_pack/raw.npy'))  # read fully into RAM (~21 GB)
+    if INPUT == 'raw_temp':
+        tc = np.load(f'{P}/cache/raw_pack/temp.npy').astype(np.float32)  # [epochs, 30] deg C at 1 Hz, NaN = missing
+        tmiss = np.isnan(tc)
+        temp = torch.from_numpy(np.stack([np.where(tmiss, 0, np.clip((tc - 33) / 2, -5, 5)), tmiss], 1)
+                                .astype(np.float16)).repeat_interleave(32, dim=-1)  # [epochs, 2, 960]
     print(f'{len(meta)} nights; device {DEV}; input {INPUT}; data in {time.time() - t0:.0f}s', flush=True)
 
     tr = np.where(meta.fold != FOLD)[0]  # FOLD -1: every night
@@ -121,12 +128,14 @@ def main():
         starts = [int(rng.integers(0, max(1, L[i] - CROP + 1))) if crop else 0 for i in b]
         lens = [min(L[i] - s, CROP) if crop else L[i] for i, s in zip(b, starts)]
         T = max(lens)
-        r = torch.zeros(len(b), T, 5, 960, dtype=torch.float16)
+        r = torch.zeros(len(b), T, C_RAW, 960, dtype=torch.float16)
         z = torch.zeros(len(b), T, Z.shape[2])
         y = torch.full((len(b), T), -1, dtype=torch.long)
         pad = torch.ones(len(b), T, dtype=torch.bool)
         for j, (i, s, n) in enumerate(zip(b, starts, lens)):
-            r[j, :n] = raw[rows[i] + s:rows[i] + s + n]
+            r[j, :n, :5] = raw[rows[i] + s:rows[i] + s + n]
+            if INPUT == 'raw_temp':
+                r[j, :n, 5:] = temp[rows[i] + s:rows[i] + s + n]
             z[j, :n], y[j, :n], pad[j, :n] = Z[i, s:s + n], Yt[i, s:s + n], False
         to = lambda t: t.to(DEV, non_blocking=True)
         return to(r).float(), to(z), to(y), to(pad), lens
