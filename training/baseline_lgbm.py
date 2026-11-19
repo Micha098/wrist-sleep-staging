@@ -5,14 +5,14 @@ Wrist-only sleep model, step 2: the baselines a deep net must beat.
   lgbm     : LightGBM on each epoch's minute signals plus centred rolling summaries (5 / 15 / 31 min) of activity,
              HR, PRV and temperature, temperature relative to the night median, and position in the recording
 
-Labels : Dreem, 4 classes: Wake, Light (N1+N2), N3, REM. Training labels by WRIST_LABELS (build_label_masks.py):
+Labels : Dreem, 5 classes: Wake, N1, N2, N3, REM (reported also as 4, N1 + N2 = Light). Training labels by WRIST_LABELS (build_label_masks.py):
            3h      - the first 3 h of the recording (Dreem scoring degrades later: unscored epochs rise from ~11 %
                      to ~41 % across the night)
            quality - reliable 10-min stretches at any time of night (few unscored / noisy EEG epochs)
          Inputs use the whole night. Unscored epochs are not used for training or scoring.
 Splits : 5 folds by family (siblings stay together); 20 % of training families for early stopping.
 Scores : the first LABEL_H hours (all scored epochs), whichever labels were used for training.
-         epoch level  - wake/sleep kappa and balanced accuracy, 4-class kappa
+         epoch level  - wake/sleep kappa and balanced accuracy, stage kappa
          night level  - TST, WASO (after the first sleep epoch), SOL (recording start to first sleep epoch),
                         number of awakenings (>= 2 consecutive wake epochs after sleep onset), on nights
                         with >= 80 % scored epochs: mean bias, MAE, Pearson r and within-child r vs Dreem
@@ -28,14 +28,10 @@ from scipy.stats import pearsonr
 from sklearn.metrics import balanced_accuracy_score, cohen_kappa_score
 
 P = os.environ.get('SOP_PROJ', 'data')  # project data folder (see training/README.md)
-STAGES = int(os.environ.get('WRIST_STAGES', '4'))  # 4: Light = N1 + N2; 5: N1 and N2 separate
-if STAGES == 5:
-    CLASS = {0: 0, 2: 1, 3: 2, 4: 3, 1: 4}  # Dreem 0 W, 2 N1, 3 N2, 4 N3, 1 REM
-    NAMES = ['Wake', 'N1', 'N2', 'N3', 'REM']
-else:
-    CLASS = {0: 0, 2: 1, 3: 1, 4: 2, 1: 3}  # Dreem 0 W, 2 N1, 3 N2 -> Light, 4 N3, 1 REM
-    NAMES = ['Wake', 'Light', 'N3', 'REM']
-ST_TAG = '_5st' if STAGES == 5 else ''  # output-file suffix
+CLASS = {0: 0, 2: 1, 3: 2, 4: 3, 1: 4}  # Dreem 0 W, 2 N1, 3 N2, 4 N3, 1 REM
+NAMES = ['Wake', 'N1', 'N2', 'N3', 'REM']
+NAMES4 = ['Wake', 'Light', 'N3', 'REM']  # reporting view: N1 + N2 merged into Light (merge_5stage.py)
+ST_TAG = '_5st'  # output-file suffix of the 5-stage models
 SIG = ['act', 'hr', 'prv', 'temp']
 WINDOWS = [10, 30, 62]  # in 30-s epochs: 5, 15, 31 min
 LABEL_H = 3
@@ -78,7 +74,7 @@ def score_late(P_, models):
         rows += [dict(level='late night (epoch)', model=m, measure='wake/sleep kappa', value=cohen_kappa_score(yt > 0, yp > 0)),
                  dict(level='late night (epoch)', model=m, measure='wake recall', value=((yp == 0) & (yt == 0)).sum() / (yt == 0).sum())]
         if m != 'empatica':
-            rows.append(dict(level='late night (epoch)', model=m, measure='4-class kappa', value=cohen_kappa_score(yt, yp)))
+            rows.append(dict(level='late night (epoch)', model=m, measure='stage kappa', value=cohen_kappa_score(yt, yp)))
     return pd.DataFrame(rows)
 
 
@@ -89,7 +85,7 @@ def family_folds(E, k=5, seed=0):
 
 
 def night_measures(df, col):
-    """df: one night's epochs (sorted) with column `col` in {0..3} (NaN allowed). Sleep = class > 0."""
+    """df: one night's epochs (sorted) with stage column `col` (0 = Wake, NaN allowed). Sleep = class > 0."""
     s = df[col].to_numpy()
     sleep = np.where(np.isnan(s), np.nan, (s > 0).astype(float))
     idx = np.where(sleep == 1)[0]
@@ -117,7 +113,7 @@ def score(P_, models, max_epoch=LABEL_EPOCHS):
                          value=balanced_accuracy_score(yt > 0, yp > 0)))
         rows.append(dict(level='epoch', model=m, measure='wake recall', value=((yp == 0) & (yt == 0)).sum() / (yt == 0).sum()))
         if m != 'empatica':
-            rows.append(dict(level='epoch', model=m, measure='4-class kappa', value=cohen_kappa_score(yt, yp)))
+            rows.append(dict(level='epoch', model=m, measure='stage kappa', value=cohen_kappa_score(yt, yp)))
     good = P_.groupby('name').y.apply(lambda x: x.notna().mean()) >= 0.8
     nights = []
     for name, df in P_[P_.name.isin(good[good].index)].groupby('name'):
@@ -140,7 +136,7 @@ def score(P_, models, max_epoch=LABEL_EPOCHS):
 
 
 def main():
-    import lightgbm as lgb  # lazy: seqnet.py imports this module on the cluster, which has no lightgbm
+    import lightgbm as lgb  # lazy: rawnet.py imports this module on the cluster, which has no lightgbm
     E = pd.read_parquet(f'{P}/wrist/epochs.parquet')
     E, F = features(E)
     E['y'] = E.stage.map(CLASS)

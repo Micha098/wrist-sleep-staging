@@ -32,7 +32,7 @@ import pandas as pd
 from scipy.stats import pearsonr
 from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, precision_recall_fscore_support
 
-from baseline_lgbm import NAMES, P, night_measures
+from baseline_lgbm import NAMES4 as NAMES, P, night_measures
 
 W = f'{P}/wrist'
 OUT = os.environ.get('WRIST_EXPORT', 'scored_nights')

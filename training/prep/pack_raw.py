@@ -1,7 +1,7 @@
 """
 Pack raw BVP + ACC per 30-s epoch for the raw-signal network (wrist/rawnet.py). Runs on the cluster (conda `sleep`).
 
-Per night (wrist/epochs.parquet, first 16 h = 1920 epochs as wrist/seqnet.py), epoch k covers [t_k, t_k + 30 s) on a
+Per night (wrist/epochs.parquet, first 16 h = 1920 epochs as wrist/minute_inputs.py), epoch k covers [t_k, t_k + 30 s) on a
 32 Hz grid, from the cut nights (cache/bvp_nights: 64 Hz, averaged in pairs; cache/acc_nights: 32 Hz):
   ch 0    BVP, robust-scaled per night (median / IQR of its finite samples), clipped to +-10
   ch 1-3  ACC x, y, z in g, clipped to +-4

@@ -3,19 +3,18 @@ Wrist-only sleep model, step 4: raw-signal network (raw BVP + ACC) on the cluste
 
 Input  : per 30-s epoch
            raw    cache/raw_pack/raw.npy (prep/pack_raw.py): 5 x 960 samples (32 Hz BVP, ACC x/y/z, missing flag)
-           minute the seqnet.py inputs (minute signals, missing flags, worn), scaled as there
-         RAWNET_INPUT = both (default) | raw | minute, to separate what the raw signals add from what the
-         architecture adds.
+           minute minute_inputs.py (minute signals, missing flags, worn), scaled as there
+         RAWNET_INPUT = both (default) | raw (raw signals only, to test what the minute inputs add).
 Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with the minute inputs ->
          residual dilated temporal CNN over epochs (dilations 1-16, ~ +-1 h) -> 2-layer transformer encoder over
-         the night -> 4 classes per epoch (Wake, Light, N3, REM).
-Labels / splits / loss: as seqnet.py (WRIST_LABELS mask, the 5 family folds of baseline_pred_3h.parquet, 20 % of
-         training families for early stopping, class-weighted CE). Training on random 8-h crops; validation and
+         the night -> 5 classes per epoch (Wake, N1, N2, N3, REM).
+Labels / splits / loss: WRIST_LABELS mask, the 5 family folds of baseline_pred_3h.parquet, 20 % of training
+         families for early stopping, class-weighted CE. Training on random 8-h crops; validation and
          test on whole nights (up to 16 h).
 
 Env    : RAWNET_FOLD=-1 trains the final model on all families (20 % of families for early stopping, no test set)
          and saves wrist/rawnet_final_<labels>_<input>.pt (weights, input scaling, config).
-         WRIST_STAGES (4, or 5 = N1 and N2 separate), RAWNET_FOLD (0-4, or SLURM_ARRAY_TASK_ID), RAWNET_SEED, RAWNET_MAX_EPOCHS (30), RAWNET_INPUT, RAWNET_BS (8)
+         RAWNET_FOLD (0-4, or SLURM_ARRAY_TASK_ID), RAWNET_SEED, RAWNET_MAX_EPOCHS (30), RAWNET_INPUT, RAWNET_BS (8)
 Output : wrist/rawnet_pred_<labels>_<input>_fold<k>.parquet (name, epoch, p_*)
 """
 import os
@@ -28,14 +27,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from baseline_lgbm import LABELS, NAMES, P, ST_TAG
-from seqnet import night_arrays, scale, scale_stats
+from minute_inputs import night_arrays, scale, scale_stats
 
 DEV = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-torch.backends.cudnn.enabled = True  # seqnet.py disables it for its GRU; no RNN here
+torch.backends.cudnn.enabled = True
 FOLD = int(os.environ.get('RAWNET_FOLD', os.environ.get('SLURM_ARRAY_TASK_ID', '0')))
 SEED = int(os.environ.get('RAWNET_SEED', '0'))
 MAX_EPOCHS = int(os.environ.get('RAWNET_MAX_EPOCHS', '30'))
 INPUT = os.environ.get('RAWNET_INPUT', 'both')
+assert INPUT in ('both', 'raw'), INPUT
 BS = int(os.environ.get('RAWNET_BS', '8'))
 CROP = 960  # 8 h training crops
 PATIENCE = 5
@@ -74,8 +74,8 @@ class ResTCN(nn.Module):
 class RawNet(nn.Module):
     def __init__(self, c_min, d=128, n_cls=len(NAMES)):
         super().__init__()
-        self.enc = Encoder(d=64) if INPUT != 'minute' else None
-        c_in = (64 if INPUT != 'minute' else 0) + (c_min if INPUT != 'raw' else 0)
+        self.enc = Encoder(d=64)
+        c_in = 64 + (c_min if INPUT == 'both' else 0)
         self.inp = nn.Linear(c_in, d)
         self.tcn = nn.Sequential(*[ResTCN(d, k) for k in [1, 2, 4, 8, 16]])
         layer = nn.TransformerEncoderLayer(d, 4, 2 * d, dropout=0.1, batch_first=True, norm_first=True)
@@ -83,11 +83,9 @@ class RawNet(nn.Module):
         self.out = nn.Linear(d, n_cls)
 
     def forward(self, raw, zmin, pad):  # raw [B, T, 5, 960], zmin [B, T, c], pad [B, T] True = padding
-        parts = []
-        if self.enc is not None:
-            B, T = raw.shape[:2]
-            parts.append(self.enc(raw.reshape(B * T, *raw.shape[2:])).reshape(B, T, -1))
-        if INPUT != 'raw':
+        B, T = raw.shape[:2]
+        parts = [self.enc(raw.reshape(B * T, *raw.shape[2:])).reshape(B, T, -1)]
+        if INPUT == 'both':
             parts.append(zmin)
         h = self.inp(torch.cat(parts, -1))
         h = self.tcn(h.transpose(1, 2)).transpose(1, 2)
@@ -105,9 +103,7 @@ def main():
     idx = pd.read_parquet(f'{P}/cache/raw_pack/index.parquet').set_index('name').loc[meta.name]
     assert (idx.n.to_numpy() == L).all(), 'raw pack and minute arrays disagree on night length'
     rows = idx.row.to_numpy()
-    raw = None
-    if INPUT != 'minute':
-        raw = torch.from_numpy(np.load(f'{P}/cache/raw_pack/raw.npy'))  # read fully into RAM (~21 GB)
+    raw = torch.from_numpy(np.load(f'{P}/cache/raw_pack/raw.npy'))  # read fully into RAM (~21 GB)
     print(f'{len(meta)} nights; device {DEV}; input {INPUT}; data in {time.time() - t0:.0f}s', flush=True)
 
     tr = np.where(meta.fold != FOLD)[0]  # FOLD -1: every night
@@ -125,16 +121,15 @@ def main():
         starts = [int(rng.integers(0, max(1, L[i] - CROP + 1))) if crop else 0 for i in b]
         lens = [min(L[i] - s, CROP) if crop else L[i] for i, s in zip(b, starts)]
         T = max(lens)
-        r = torch.zeros(len(b), T, 5, 960, dtype=torch.float16) if raw is not None else None
+        r = torch.zeros(len(b), T, 5, 960, dtype=torch.float16)
         z = torch.zeros(len(b), T, Z.shape[2])
         y = torch.full((len(b), T), -1, dtype=torch.long)
         pad = torch.ones(len(b), T, dtype=torch.bool)
         for j, (i, s, n) in enumerate(zip(b, starts, lens)):
-            if r is not None:
-                r[j, :n] = raw[rows[i] + s:rows[i] + s + n]
+            r[j, :n] = raw[rows[i] + s:rows[i] + s + n]
             z[j, :n], y[j, :n], pad[j, :n] = Z[i, s:s + n], Yt[i, s:s + n], False
-        to = lambda t: None if t is None else t.to(DEV, non_blocking=True)
-        return None if r is None else to(r).float(), to(z), to(y), to(pad), lens
+        to = lambda t: t.to(DEV, non_blocking=True)
+        return to(r).float(), to(z), to(y), to(pad), lens
 
     net = RawNet(Z.shape[2]).to(DEV)
     opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-2)

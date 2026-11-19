@@ -2,7 +2,7 @@
 Wrist-only sleep model, step 6: numbers for the validation paper / lab talk.
 
 1. Splits      : per family fold, nights / children / families / labelled epochs in fit, validation (early
-                 stopping) and test sets (the seqnet.py / rawnet.py split).
+                 stopping) and test sets (the rawnet.py split).
 2. Stage F1    : per-stage precision, recall, F1, macro F1, accuracy, kappa on held-out test predictions for
                  empatica (wake/sleep only), lgbm_5m, raw_5m (5-stage models, N1+N2 merged; merge_5stage.py):
                    reliable - quality-mask epochs, whole night (the training-label definition)
@@ -22,7 +22,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, f1_score, precision_recall_fscore_support
 
-from baseline_lgbm import LABEL_EPOCHS, NAMES, P, score
+from baseline_lgbm import LABEL_EPOCHS, NAMES4 as NAMES, P, score
 
 W = f'{P}/wrist'
 OUT = f'{W}/paper'

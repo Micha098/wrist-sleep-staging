@@ -1,7 +1,7 @@
 #!/bin/bash
 # Raw-signal wrist network (wrist/rawnet.py), one family fold per array task.
 #   pilot : sbatch --array=0 --time=00:45:00 --export=ALL,RAWNET_MAX_EPOCHS=2 rawnet.sbatch
-#   full  : sbatch --array=0-4 rawnet.sbatch                 (RAWNET_INPUT=both | raw | minute)
+#   full  : sbatch --array=0-4 rawnet.sbatch                 (RAWNET_INPUT=both | raw)
 #SBATCH --job-name=wrist_rawnet
 #SBATCH --partition=gpu
 #SBATCH --gpus=1

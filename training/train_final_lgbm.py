@@ -1,6 +1,6 @@
 """
 Final LightGBM (quality labels) on all families, for release: 20 % of families for early stopping, no test set.
-WRIST_STAGES=4 (default) or 5. Output: wrist/lgbm_final_quality[_5st].txt (LightGBM model) + .json (feature list, classes).
+5 stages. Output: wrist/lgbm_final_quality_5st.txt (LightGBM model) + .json (feature list, classes).
 """
 import json
 

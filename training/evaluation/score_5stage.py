@@ -1,5 +1,5 @@
 """
-Wrist-only sleep model: score the 5-stage models (Wake, N1, N2, N3, REM; WRIST_STAGES=5) against Dreem.
+Wrist-only sleep model: score the 5-stage models (Wake, N1, N2, N3, REM) against Dreem.
 
 Models : lgbm (baseline_pred_quality_5st.parquet) and the raw-signal network (rawnet_pred/rawnet_pred_quality_5st_both_fold?.parquet)
 Scores : per-stage precision / recall / F1, macro F1, kappa, row-% confusion matrices on reliable-label epochs and on all
@@ -8,9 +8,6 @@ Scores : per-stage precision / recall / F1, macro F1, kappa, row-% confusion mat
 Output : wrist/paper/5stage_epoch_metrics.csv, 5stage_confusion_<model>_<set>.csv, 5stage_night_agreement.csv
 """
 import glob
-import os
-
-os.environ['WRIST_STAGES'] = '5'
 
 import numpy as np
 import pandas as pd

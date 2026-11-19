@@ -1,7 +1,7 @@
 """
 Wrist-only sleep model: the evaluation table of the paper (one 5-stage model per method; decision 2026-11-18).
 
-Both models are trained on five stages (Wake, N1, N2, N3, REM; WRIST_STAGES=5). Their four-stage output is the
+Both models are trained on five stages (Wake, N1, N2, N3, REM). Their four-stage output is the
 5-stage hypnogram with N1 and N2 merged into Light (hard labels), so the 4- and 5-stage outputs always agree; staging
 accuracy equals that of a separately trained 4-stage model (reliable kappa .709 vs .713).
 

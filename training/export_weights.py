@@ -1,5 +1,5 @@
 """
-Convert the final training checkpoints (rawnet.py with RAWNET_FOLD=-1, WRIST_STAGES=5) into the released format:
+Convert the final training checkpoints (rawnet.py with RAWNET_FOLD=-1) into the released format:
 weights/rawnet.pt (tensor-only state dict, loads with weights_only=True) + weights/rawnet.json (classes, input order,
 input scaling). LightGBM: copies wrist/lgbm_final_quality_5st.txt/.json to weights/lgbm.*.
     python export_weights.py <SOP_PROJ>/wrist ../weights
