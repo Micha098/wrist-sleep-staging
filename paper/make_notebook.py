@@ -236,8 +236,10 @@ for ax, name, q in zip(axs, pick, ['10th', '50th', '90th']):
         ax.step(h, g[col].map(level) + off, where='post', lw=1, color=c, label=lab)
     ax.set_yticks([0, 1, 2, 3], ['N3', 'Light', 'REM', 'Wake']); ax.set_xlim(0, h.max())
     ax.set_title(f'{q} percentile night: deep-network kappa {kap[name]:.2f}', fontsize=10)
-axs[0].legend(ncol=3, frameon=False, loc='upper right'); axs[-1].set_xlabel('Hours from the start of the recording')
-fig.tight_layout(); fig.savefig(f'{FIG}/fig8_example_nights.png', dpi=200, bbox_inches='tight'); plt.show()""")
+axs[-1].set_xlabel('Hours from the start of the recording')
+fig.tight_layout(rect=(0, 0, 1, 0.96))
+fig.legend(*axs[0].get_legend_handles_labels(), ncol=3, frameon=False, loc='upper center', bbox_to_anchor=(0.5, 1.0))
+fig.savefig(f'{FIG}/fig8_example_nights.png', dpi=200, bbox_inches='tight'); plt.show()""")
 
 nb = nbf.v4.new_notebook(cells=cells, metadata={'kernelspec': {'name': 'python3', 'display_name': 'Python 3', 'language': 'python'}})
 nbf.write(nb, 'figures.ipynb')
