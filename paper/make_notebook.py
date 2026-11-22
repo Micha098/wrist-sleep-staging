@@ -40,7 +40,7 @@ COL = {'LightGBM': '#9a9a9a', 'Deep network': '#2f6fd6'}
 plt.rcParams.update({'font.size': 10, 'axes.spines.top': False, 'axes.spines.right': False, 'figure.dpi': 110})
 
 A = pd.read_parquet(f'{P}/wrist/eval_pred.parquet',
-                    columns=['SPID', 'name', 'date', 'epoch', 'y', 'mask_quality'] + list(MODELS)).sort_values(['name', 'epoch'])
+                    columns=['SPID', 'name', 'date', 'epoch', 'y', 'mask_quality', 'empatica'] + list(MODELS)).sort_values(['name', 'epoch'])
 A['reliable'] = A.mask_quality.fillna(False).astype(bool) & A.y.notna()
 print(f"{A.name.nunique():,} nights, {A.SPID.nunique()} children, {len(A):,} epochs, "
       f"{A.y.notna().sum():,} scored, {A.reliable.sum():,} reliable")""")
@@ -220,25 +220,41 @@ fig.tight_layout(); fig.savefig(f'{FIG}/fig7_groups_age.png', dpi=200, bbox_inch
 T = pd.read_csv(f'{P}/wrist/paper/group_age_tests.csv')
 display(T[T.metric.isin(['kappa', 'macro_f1']) & T.model.isin(MODELS)][['model', 'metric', 'n', 'b_asd', 'p_asd', 'b_adhd', 'p_adhd', 'b_age', 'p_age']].round(3))""")
 
-md("""## Figure 8. Example nights
+md("""## Figure 8. Comparison hypnograms
 
-Hypnograms of three nights at the 10th, 50th and 90th percentile of the deep network's per-night kappa (reliable-stretch epochs; nights with
->= 80% scored), with Dreem (top trace), the deep network and LightGBM.""")
+Three nights at the 10th, 50th and 90th percentile of the deep network's per-night kappa (reliable-stretch epochs;
+nights with >= 80% scored). For each night, from top to bottom: Dreem (reference; gaps = unscored epochs), the deep
+network, LightGBM and Empatica's own sleep detection (wake / sleep only). REM is drawn in red, as in clinical
+hypnograms.""")
 code("""kap = {name: cohen_kappa_score(g.y.astype(int), g.raw_5m.astype(int), labels=range(4))
        for name, g in A[A.name.isin(G.name) & A.mask_quality.fillna(False).astype(bool)].dropna(subset=['y', 'raw_5m']).groupby('name')}
 kap = pd.Series(kap).sort_values()
 pick = [kap.index[int(q * (len(kap) - 1))] for q in (0.1, 0.5, 0.9)]
 level = {0: 3, 3: 2, 1: 1, 2: 0}  # Wake, REM, Light, N3 from top to bottom
-fig, axs = plt.subplots(3, 1, figsize=(12, 7.5))
-for ax, name, q in zip(axs, pick, ['10th', '50th', '90th']):
-    g = A[A.name == name]; h = g.epoch / 120
-    for col, off, lab, c in [('y', 0.16, 'Dreem', 'black'), ('raw_5m', 0, 'Deep network', COL['Deep network']), ('lgbm_5m', -0.16, 'LightGBM', '#e8962e')]:
-        ax.step(h, g[col].map(level) + off, where='post', lw=1, color=c, label=lab)
-    ax.set_yticks([0, 1, 2, 3], ['N3', 'Light', 'REM', 'Wake']); ax.set_xlim(0, h.max())
-    ax.set_title(f'{q} percentile night: deep-network kappa {kap[name]:.2f}', fontsize=10)
-axs[-1].set_xlabel('Hours from the start of the recording')
-fig.tight_layout(rect=(0, 0, 1, 0.96))
-fig.legend(*axs[0].get_legend_handles_labels(), ncol=3, frameon=False, loc='upper center', bbox_to_anchor=(0.5, 1.0))
+rows = [('y', 'Dreem'), ('raw_5m', 'Deep network'), ('lgbm_5m', 'LightGBM'), ('empatica', 'Empatica')]
+fig = plt.figure(figsize=(12, 13))
+outer = fig.add_gridspec(3, 1, hspace=0.35)
+for k, (name, q) in enumerate(zip(pick, ['10th', '50th', '90th'])):
+    g = A[A.name == name]; h = (g.epoch / 120).to_numpy()
+    inner = outer[k].subgridspec(4, 1, hspace=0.12, height_ratios=[1, 1, 1, 0.55])
+    for j, (col, lab) in enumerate(rows):
+        ax = fig.add_subplot(inner[j])
+        if col == 'empatica':
+            yv = g[col].map({0: 1, 1: 0}).to_numpy(float)
+            ax.step(h, yv, where='post', lw=0.9, color='#555555')
+            ax.set_yticks([0, 1], ['Sleep', 'Wake']); ax.set_ylim(-0.4, 1.4)
+        else:
+            yv = g[col].map(level).to_numpy(float)
+            ax.step(h, yv, where='post', lw=0.9, color='black' if col == 'y' else '#333333')
+            rem = np.where(g[col].to_numpy() == 3, yv, np.nan)
+            ax.step(h, rem, where='post', lw=3, color='#d62728', solid_capstyle='butt')
+            ax.set_yticks([0, 1, 2, 3], ['N3', 'Light', 'REM', 'Wake']); ax.set_ylim(-0.5, 3.5)
+        ax.set_xlim(0, h.max()); ax.tick_params(labelsize=8)
+        ax.set_ylabel(lab, rotation=0, ha='right', va='center', fontsize=9, labelpad=28)
+        if j < 3: ax.set_xticklabels([])
+        if j == 0:
+            ax.set_title(f'{q} percentile night: deep-network kappa {kap[name]:.2f}', fontsize=10)
+    ax.set_xlabel('Hours from the start of the recording', fontsize=9)
 fig.savefig(f'{FIG}/fig8_example_nights.png', dpi=200, bbox_inches='tight'); plt.show()""")
 
 nb = nbf.v4.new_notebook(cells=cells, metadata={'kernelspec': {'name': 'python3', 'display_name': 'Python 3', 'language': 'python'}})

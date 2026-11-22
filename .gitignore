@@ -3,5 +3,8 @@ __pycache__/
 .ipynb_checkpoints/
 results/
 data/
-figures/
+/figures/
 .DS_Store
+!paper/figures/
+paper/figures/*
+!paper/figures/fig8_example_nights.png

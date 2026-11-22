@@ -36,6 +36,11 @@ night to night. Both models score some quiet wake as sleep, so total sleep time 
 under-estimated by a similar amount on every night. Accuracy did not differ between autistic and non-autistic children
 or with age. See the paper [citation to be added] for the full validation.
 
+![Comparison hypnograms](paper/figures/fig8_example_nights.png)
+
+*Three held-out nights at the 10th, 50th and 90th percentile of the deep network's per-night kappa: Dreem (reference),
+the deep network, LightGBM and Empatica's own sleep detection. REM in red.*
+
 ## Install
 
 ```bash
