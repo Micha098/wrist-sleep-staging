@@ -5,7 +5,9 @@ Input  : per 30-s epoch
            raw    cache/raw_pack/raw.npy (prep/pack_raw.py): 5 x 960 samples (32 Hz BVP, ACC x/y/z, missing flag)
            minute minute_inputs.py (minute signals, missing flags, worn), scaled as there
          RAWNET_INPUT = raw (default, the released model: raw signals + hours since recording start) | both (also all
-         Empatica minute signals; the earlier release). Time of night is kept in both, as it is not a wristband signal.
+         Empatica minute signals; the earlier release) | acc (motion only: accelerometer x/y/z + its own missing flag +
+         hours since recording start; for accelerometer-only devices). Time of night is kept in all, as it is not a
+         wristband signal.
            extra  RAWNET_EXTRA = comma list of slow raw signals added to the epoch encoder: temp, eda
                   (cache/raw_pack/<signal>.npy, prep/pack_slow.py; each repeated to 960 samples, + a missing flag)
 Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with the minute inputs ->
@@ -39,8 +41,8 @@ SEED = int(os.environ.get('RAWNET_SEED', '0'))
 MAX_EPOCHS = int(os.environ.get('RAWNET_MAX_EPOCHS', '30'))
 INPUT = os.environ.get('RAWNET_INPUT', 'raw')
 EXTRA = [s for s in os.environ.get('RAWNET_EXTRA', '').split(',') if s]
-assert INPUT in ('both', 'raw') and set(EXTRA) <= {'temp', 'eda'}, (INPUT, EXTRA)
-C_RAW = 5 + 2 * len(EXTRA)  # each extra signal + its missing flag
+assert INPUT in ('both', 'raw', 'acc') and set(EXTRA) <= {'temp', 'eda'}, (INPUT, EXTRA)
+C_RAW = (4 if INPUT == 'acc' else 5) + 2 * len(EXTRA)  # each extra signal + its missing flag
 NAME = INPUT + ''.join(f'_{s}' for s in EXTRA)
 POS_H = 8  # column of hours since recording start in the minute inputs (minute_inputs.night_arrays `cont`)
 BS = int(os.environ.get('RAWNET_BS', '8'))
@@ -140,9 +142,13 @@ def main():
         y = torch.full((len(b), T), -1, dtype=torch.long)
         pad = torch.ones(len(b), T, dtype=torch.bool)
         for j, (i, s, n) in enumerate(zip(b, starts, lens)):
-            r[j, :n, :5] = raw[rows[i] + s:rows[i] + s + n]
+            x = raw[rows[i] + s:rows[i] + s + n]
+            if INPUT == 'acc':  # x/y/z + missing flag of the accelerometer alone (missing samples are exactly 0)
+                r[j, :n, :3], r[j, :n, 3] = x[:, 1:4], (x[:, 1:4] == 0).all(1)
+            else:
+                r[j, :n, :5] = x
             if extra is not None:
-                r[j, :n, 5:] = extra[rows[i] + s:rows[i] + s + n]
+                r[j, :n, C_RAW - 2 * len(EXTRA):] = extra[rows[i] + s:rows[i] + s + n]
             z[j, :n], y[j, :n], pad[j, :n] = Z[i, s:s + n], Yt[i, s:s + n], False
         to = lambda t: t.to(DEV, non_blocking=True)
         return to(r).float(), to(z), to(y), to(pad), lens

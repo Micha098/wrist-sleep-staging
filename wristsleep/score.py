@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .inputs import epoch_table, lgbm_features, network_minute_inputs, raw_epochs
+from .inputs import acc_epochs, epoch_table, lgbm_features, network_minute_inputs, raw_epochs
 from .measures import night_measures
 from .model import RawNet
 
@@ -45,13 +45,17 @@ def to_unix(x):
 
 
 class Scorer:
-    def __init__(self, weights_dir=WEIGHTS, device='cpu'):
-        meta = json.load(open(Path(weights_dir) / 'rawnet.json'))  # classes + input scaling of the fit set
+    def __init__(self, weights_dir=WEIGHTS, device='cpu', model='raw'):
+        """model: 'raw' (pulse + motion, weights/rawnet.*) or 'acc' (motion only, weights/rawnet_acc.*: for
+        accelerometer-only devices)."""
+        stem = 'rawnet' if model == 'raw' else f'rawnet_{model}'
+        meta = json.load(open(Path(weights_dir) / f'{stem}.json'))  # classes + input scaling of the fit set
         self.names = meta['names']
         self.med, self.iqr = np.asarray(meta['med']), np.asarray(meta['iqr'])
         self.input = meta.get('input', 'both')
-        self.net = RawNet(c_min=1 if self.input == 'raw' else 19, n_cls=len(self.names))
-        self.net.load_state_dict(torch.load(Path(weights_dir) / 'rawnet.pt', map_location='cpu', weights_only=True))
+        self.net = RawNet(c_min=19 if self.input == 'both' else 1, n_cls=len(self.names),
+                          c_raw=4 if self.input == 'acc' else 5)
+        self.net.load_state_dict(torch.load(Path(weights_dir) / f'{stem}.pt', map_location='cpu', weights_only=True))
         self.net.eval().to(device)
         self.device = device
         self.lgbm = None
@@ -67,13 +71,16 @@ class Scorer:
         for Empatica's wear detection). Returns (epochs DataFrame, night summary dict)."""
         if self.input == 'raw' and bvp is None and acc is None:
             raise ValueError('the deep network needs the raw pulse and/or accelerometer data')
+        if self.input == 'acc' and acc is None:
+            raise ValueError('the motion-only network needs the raw accelerometer data')
         start, end = to_unix(start), to_unix(end)
         E = epoch_table(minutes, start, end)
         z = network_minute_inputs(E, self.med, self.iqr)
-        if self.input == 'raw':
+        if self.input != 'both':
             z = z[:, [len(self.med) - 1]]  # scaled hours since the start of the night (last input)
         z = torch.from_numpy(z)[None]
-        r = torch.from_numpy(raw_epochs(bvp, acc, start, len(E))).float()[None]
+        raw = acc_epochs(acc, start, len(E)) if self.input == 'acc' else raw_epochs(bvp, acc, start, len(E))
+        r = torch.from_numpy(raw).float()[None]
         pad = torch.zeros(1, len(E), dtype=torch.bool)
         with torch.no_grad():
             p = torch.softmax(self.net(r.to(self.device), z.to(self.device), pad.to(self.device)), -1)[0].cpu().numpy()
@@ -92,9 +99,9 @@ class Scorer:
             out['stage_lgbm'] = np.array(NAMES4)[MERGE[l5]]
             m = night_measures(l5, self.names)
             summary.update({f'lgbm_{k}': m[k] for k in ['TST_min', 'SOL_min', 'WASO_min', 'awakenings']})
-        worn = (E.wear >= 50).mean() if minutes is not None else 1 - float(r[0, :, 4].mean())
+        worn = (E.wear >= 50).mean() if minutes is not None else 1 - float(r[0, :, -1].mean())
         summary.update(epochs=len(E), worn_fraction=round(float(worn), 3),
-                       raw_missing_fraction=round(float(r[0, :, 4].mean()), 3))
+                       raw_missing_fraction=round(float(r[0, :, -1].mean()), 3))
         if worn < 0.8:
             summary['warning'] = 'wristband worn < 80% of the night: the models were validated on worn nights only'
         return out, summary

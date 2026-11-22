@@ -100,6 +100,12 @@ def raw_epochs(bvp, acc, start, n_epochs):
     return np.nan_to_num(out, nan=0.0).astype(np.float16)
 
 
+def acc_epochs(acc, start, n_epochs):
+    """[n_epochs, 4, 960] motion-only inputs: accelerometer x/y/z (g, clipped to +-4) and its missing flag."""
+    r = raw_epochs(None, acc, start, n_epochs)
+    return np.concatenate([r[:, 1:4], (r[:, 1:4] == 0).all(1, keepdims=True).astype(np.float16)], 1)
+
+
 def lgbm_features(E):
     """The 39 LightGBM features per epoch (as training/baseline_lgbm.py `features`), for one night."""
     E = E.sort_values('epoch').reset_index(drop=True).copy()
