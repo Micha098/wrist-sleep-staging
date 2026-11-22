@@ -2,8 +2,7 @@
 Wrist-only sleep model: score the 5-stage models (Wake, N1, N2, N3, REM) against Dreem.
 
 Models : lgbm (baseline_pred_quality_5st.parquet) and the raw-signal network (rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet)
-Scores : per-stage precision / recall / F1, macro F1, kappa, row-% confusion matrices on reliable-label epochs and on all
-         scored epochs; per-night minutes of N1 and N2 (and % of sleep) vs Dreem on nights with >= 80 % scored epochs
+Scores : per-stage precision / recall / F1, macro F1, kappa, row-% confusion matrices on reliable-stretch epochs; per-night minutes of N1 and N2 (and % of sleep) vs Dreem on nights with >= 80 % scored epochs
          (r, within-child r, bias), stage percentages on epochs scored by both.
 Output : wrist/paper/5stage_epoch_metrics.csv, 5stage_confusion_<model>_<set>.csv, 5stage_night_agreement.csv
 """
@@ -33,7 +32,7 @@ def load():
 
 def epoch_metrics(D):
     rows, conf = [], []
-    for sname, m in [('reliable', D.mask_quality & D.y.notna()), ('all scored', D.y.notna())]:
+    for sname, m in [('reliable', D.mask_quality & D.y.notna())]:
         for mod in ['lgbm', 'rawnet']:
             yt, yp = D.y[m].astype(int), D[mod][m].astype(int)
             pr, rc, f1, sup = precision_recall_fscore_support(yt, yp, labels=range(5), zero_division=0)

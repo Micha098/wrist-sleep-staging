@@ -3,12 +3,9 @@ Wrist-only sleep model, step 6: numbers for the validation paper / lab talk.
 
 1. Splits      : per family fold, nights / children / families / labelled epochs in fit, validation (early
                  stopping) and test sets (the rawnet.py split).
-2. Stage F1    : per-stage precision, recall, F1, macro F1, accuracy, kappa on held-out test predictions for
-                 empatica (wake/sleep only), lgbm_5m, raw_5m (5-stage models, N1+N2 merged; merge_5stage.py):
-                   reliable - quality-mask epochs, whole night (the training-label definition)
-                   first3h  - all scored epochs in the first 3 h
-                   all      - all scored epochs, whole night
-                 + row-normalised confusion matrices on the reliable set.
+2. Stage F1    : per-stage precision, recall, F1, macro F1, accuracy, kappa, wake/sleep kappa and F1 on held-out test
+                 predictions of empatica (Empatica's own sleep detection, wake/sleep only), lgbm_5m and raw_5m (5-stage models, N1+N2 merged; merge_5stage.py), on reliable-stretch
+                 epochs, + row-normalised confusion matrices.
 3. Groups / age: per-child 4-stage kappa, macro F1 and wake F1 on reliable epochs (children with >= 200), and
                  per-night WASO error (whole nights with >= 80 % scored), by group4 and against age;
                  OLS: metric ~ asd + adhd + age + male.
@@ -22,7 +19,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, f1_score, precision_recall_fscore_support
 
-from baseline_lgbm import LABEL_EPOCHS, NAMES4 as NAMES, P, score
+from baseline_lgbm import NAMES4 as NAMES, P, score
 
 W = f'{P}/wrist'
 OUT = f'{W}/paper'
@@ -52,9 +49,7 @@ def splits():
 
 
 def stage_metrics(A):
-    sets = {'reliable': A.mask_quality.fillna(False).astype(bool) & A.y.notna(),
-            'first3h': (A.epoch < LABEL_EPOCHS) & A.y.notna(),
-            'all': A.y.notna()}
+    sets = {'reliable': A.mask_quality.fillna(False).astype(bool) & A.y.notna()}
     rows, conf = [], []
     for sname, m in sets.items():
         s = A[m]
@@ -76,11 +71,10 @@ def stage_metrics(A):
             rows += [dict(base, measure='macro F1', value=f1.mean()),
                      dict(base, measure='4-stage accuracy', value=accuracy_score(yt, yp)),
                      dict(base, measure='4-stage kappa', value=cohen_kappa_score(yt, yp))]
-            if sname == 'reliable':
-                cm = confusion_matrix(yt, yp, labels=[0, 1, 2, 3])
-                cm = cm / cm.sum(1, keepdims=True)
-                for i, a in enumerate(NAMES):
-                    conf.append(dict(model=mod, dreem=a, **{f'pred_{b}': cm[i, j] for j, b in enumerate(NAMES)}))
+            cm = confusion_matrix(yt, yp, labels=[0, 1, 2, 3])
+            cm = cm / cm.sum(1, keepdims=True)
+            for i, a in enumerate(NAMES):
+                conf.append(dict(model=mod, dreem=a, **{f'pred_{b}': cm[i, j] for j, b in enumerate(NAMES)}))
     return pd.DataFrame(rows), pd.DataFrame(conf)
 
 
@@ -100,9 +94,9 @@ def child_metrics(A, C):
 
 
 def night_errors(A, C):
-    _, N = score(A, ['empatica', 'lgbm_5m', 'raw_5m'], max_epoch=10**6)
+    _, N = score(A.assign(mask_quality=A.mask_quality.fillna(False).astype(bool)), MODELS)
     rows = []
-    for mod in ['empatica', 'lgbm_5m', 'raw_5m']:
+    for mod in MODELS:
         for key in ['WASO', 'n_awak', 'TST']:
             d = N[['name', 'SPID', f'{key}_y', f'{key}_{mod}']].dropna()
             rows.append(pd.DataFrame(dict(name=d.name, SPID=d.SPID, model=mod, measure=key,

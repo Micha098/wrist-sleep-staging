@@ -1,24 +1,20 @@
 """
-Wrist-only sleep model, step 2: the baselines a deep net must beat.
+Wrist-only sleep model, step 4: LightGBM, the feature-based model the deep network is compared with, and Empatica's
+own sleep detection (wake / sleep only).
 
   empatica : Empatica's own sleep detection (0 awake, 101 sleep, 102 short WASO, 300 long WASO; only 101 = sleep)
   lgbm     : LightGBM on each epoch's minute signals plus centred rolling summaries (5 / 15 / 31 min) of activity,
-             HR, PRV and temperature, temperature relative to the night median, and position in the recording
+         HR, PRV and temperature, temperature relative to the night median, and position in the recording
 
-Labels : Dreem, 5 classes: Wake, N1, N2, N3, REM (reported also as 4, N1 + N2 = Light). Training labels by WRIST_LABELS (build_label_masks.py):
-           3h      - the first 3 h of the recording (Dreem scoring degrades later: unscored epochs rise from ~11 %
-                     to ~41 % across the night)
-           quality - reliable 10-min stretches at any time of night (few unscored / noisy EEG epochs)
-         Inputs use the whole night. Unscored epochs are not used for training or scoring.
+Labels : Dreem, 5 classes: Wake, N1, N2, N3, REM (reported also as 4, N1 + N2 = Light), on the reliable 10-min
+         stretches of build_label_masks.py (mask_quality). Inputs use the whole night.
 Splits : 5 folds by family (siblings stay together); 20 % of training families for early stopping.
-Scores : the first LABEL_H hours (all scored epochs), whichever labels were used for training.
-         epoch level  - wake/sleep kappa and balanced accuracy, stage kappa
+Scores : epoch level  - wake/sleep kappa and balanced accuracy, stage kappa, on reliable-stretch epochs
          night level  - TST, WASO (after the first sleep epoch), SOL (recording start to first sleep epoch),
-                        number of awakenings (>= 2 consecutive wake epochs after sleep onset), on nights
+                        number of awakenings (>= 2 consecutive wake epochs after sleep onset), whole nights
                         with >= 80 % scored epochs: mean bias, MAE, Pearson r and within-child r vs Dreem
-         late night   - epoch level on the reliable stretches after LABEL_H hours (score_late)
 
-Outputs: wrist/baseline_pred_<labels>.parquet, baseline_scores_<labels>.csv, baseline_nights_<labels>.csv
+Outputs: wrist/baseline_pred_quality_5st.parquet, baseline_scores_quality_5st.csv, baseline_nights_quality_5st.csv
 """
 import os
 
@@ -34,9 +30,7 @@ NAMES4 = ['Wake', 'Light', 'N3', 'REM']  # reporting view: N1 + N2 merged into L
 ST_TAG = '_5st'  # output-file suffix of the 5-stage models
 SIG = ['act', 'hr', 'prv', 'temp']
 WINDOWS = [10, 30, 62]  # in 30-s epochs: 5, 15, 31 min
-LABEL_H = 3
-LABEL_EPOCHS = LABEL_H * 120  # scoring window (and the 3h training labels)
-LABELS = os.environ.get('WRIST_LABELS', '3h')
+LABELS = 'quality'  # reliable-stretch labels (build_label_masks.py mask_quality)
 
 
 def features(E):
@@ -64,20 +58,6 @@ def empatica_wake_sleep(E):
     return np.where(E.emp_stage.isna() | (E.wear < 50), np.nan, np.where(E.emp_stage == 101, 1, 0))
 
 
-def score_late(P_, models):
-    """Epoch-level agreement on the reliable stretches after LABEL_H hours (P_ needs mask_quality)."""
-    s = P_[P_.mask_quality & (P_.epoch >= LABEL_EPOCHS) & P_.y.notna()]
-    rows = []
-    for m in models:
-        k = s[m].notna()
-        yt, yp = s.y[k].astype(int), s[m][k].astype(int)
-        rows += [dict(level='late night (epoch)', model=m, measure='wake/sleep kappa', value=cohen_kappa_score(yt > 0, yp > 0)),
-                 dict(level='late night (epoch)', model=m, measure='wake recall', value=((yp == 0) & (yt == 0)).sum() / (yt == 0).sum())]
-        if m != 'empatica':
-            rows.append(dict(level='late night (epoch)', model=m, measure='stage kappa', value=cohen_kappa_score(yt, yp)))
-    return pd.DataFrame(rows)
-
-
 def family_folds(E, k=5, seed=0):
     fam = E.family_SPID.fillna(E.SPID).drop_duplicates().sample(frac=1, random_state=seed).to_numpy()
     f = {x: i % k for i, x in enumerate(fam)}
@@ -100,10 +80,10 @@ def night_measures(df, col):
     return dict(TST=np.nansum(sleep) / 2, SOL=so / 2, WASO=np.nansum(seg == 0) / 2, n_awak=n_awak)
 
 
-def score(P_, models, max_epoch=LABEL_EPOCHS):
-    P_ = P_[P_.epoch < max_epoch]
+def score(P_, models):
+    """Epoch level on reliable-stretch epochs (P_ needs mask_quality); night level on whole nights."""
     rows = []
-    s = P_[P_.y.notna()]
+    s = P_[P_.mask_quality & P_.y.notna()]
     for m in models:
         k = s[m].notna()
         yt, yp = s.y[k].astype(int), s[m][k].astype(int)
@@ -140,15 +120,15 @@ def main():
     E = pd.read_parquet(f'{P}/wrist/epochs.parquet')
     E, F = features(E)
     E['y'] = E.stage.map(CLASS)
-    E = E.merge(pd.read_parquet(f'{P}/wrist/label_masks.parquet', columns=['name', 'epoch', 'mask_3h', 'mask_quality']),
+    E = E.merge(pd.read_parquet(f'{P}/wrist/label_masks.parquet', columns=['name', 'epoch', 'mask_quality']),
                 on=['name', 'epoch'], how='left', validate='1:1')
-    E[['mask_3h', 'mask_quality']] = E[['mask_3h', 'mask_quality']].fillna(False).astype(bool)
+    E['mask_quality'] = E.mask_quality.fillna(False).astype(bool)
     E['fold'] = family_folds(E)
     E['empatica'] = empatica_wake_sleep(E)
     E['lgbm'] = np.nan
     proba = np.full((len(E), len(NAMES)), np.nan)
     for k in range(5):
-        tr = (E.fold != k) & E[f'mask_{LABELS}']
+        tr = (E.fold != k) & E.mask_quality
         te = (E.fold == k).to_numpy()
         fams = E.loc[tr, 'family_SPID'].fillna(E.loc[tr, 'SPID']).unique()
         val_f = set(pd.Series(fams).sample(frac=0.2, random_state=k))
@@ -162,11 +142,10 @@ def main():
         E.loc[te, 'lgbm'] = proba[te].argmax(1)
         print(f'fold {k}: {fit.sum():,} train epochs, best iteration {m.best_iteration_}', flush=True)
     E[[f'p_{c}' for c in NAMES]] = proba
-    keep = ['SPID', 'family_SPID', 'name', 'date', 'epoch', 'stage', 'y', 'fold', 'mask_3h', 'mask_quality', 'empatica',
-            'lgbm'] + [f'p_{c}' for c in NAMES]
+    keep = ['SPID', 'family_SPID', 'name', 'date', 'epoch', 'stage', 'y', 'fold', 'mask_quality', 'empatica', 'lgbm'] + \
+        [f'p_{c}' for c in NAMES]
     E[keep].to_parquet(f'{P}/wrist/baseline_pred_{LABELS}{ST_TAG}.parquet', index=False)
     S, N = score(E, ['empatica', 'lgbm'])
-    S = pd.concat([S, score_late(E, ['empatica', 'lgbm'])])
     S.to_csv(f'{P}/wrist/baseline_scores_{LABELS}{ST_TAG}.csv', index=False)
     N.to_csv(f'{P}/wrist/baseline_nights_{LABELS}{ST_TAG}.csv', index=False)
     print(S.pivot_table(index=['level', 'measure'], columns='model', values='value', sort=False).round(3).to_string())

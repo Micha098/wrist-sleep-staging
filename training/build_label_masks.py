@@ -1,7 +1,6 @@
 """
-Which Dreem epochs to trust as labels. Two masks over wrist/epochs.parquet:
+Which Dreem epochs to trust as labels: the reliable stretches, a mask over wrist/epochs.parquet.
 
-  mask_3h       : scored epochs in the first 3 h of the recording (Dreem scoring is most complete there)
   mask_quality  : scored epochs, any time of night, inside reliable 10-min stretches. A stretch is reliable when
                   <= 20 % of its epochs are unscored and <= 30 % of its sleep-scored epochs are noisy. All epochs of a
                   reliable stretch are kept, including wake, so the rule does not filter out awakenings.
@@ -19,7 +18,7 @@ EEG markers come from cache/eeg_quality.parquet (prep/extract_eeg_quality.py) an
 cache/eeg_power_filter_features.parquet (prep/extract_power_filter_features.py), both pulled from the cluster EEG
 cache, joined on time (nearest within 15 s).
 
-Output: wrist/label_masks.parquet (name, epoch, mask_3h, mask_quality, noisy, stretch_ok); WRIST_MASK_OUT overrides the
+Output: wrist/label_masks.parquet (name, epoch, mask_quality, noisy, stretch_ok); WRIST_MASK_OUT overrides the
 file (e.g. for a dry run).
 """
 import os
@@ -91,17 +90,15 @@ def main():
     noisy = g.noisy.transform('mean').fillna(0)
     no_eeg = g.beta.transform(lambda x: x.isna().mean()) > 0.5  # no EEG markers -> cannot vouch for it
     E['stretch_ok'] = (unsc <= MAX_UNSCORED) & (noisy <= MAX_NOISY) & ~no_eeg
-    E['mask_3h'] = E.stage.notna() & (E.epoch < 360)
     E['mask_quality'] = E.stage.notna() & E.stretch_ok
-    E[['name', 'epoch', 'mask_3h', 'mask_quality', 'noisy', 'stretch_ok']].to_parquet(OUT, index=False)
+    E[['name', 'epoch', 'mask_quality', 'noisy', 'stretch_ok']].to_parquet(OUT, index=False, compression=None)  # cluster pyarrow: no snappy
     lab = {0: 'Wake', 1: 'REM', 2: 'N1', 3: 'N2', 4: 'N3'}
     print(f'EEG markers matched on {E.beta.notna().mean():.1%} of epochs')
     print('noisy sleep epochs by stage:', E[sleep].groupby(E.stage.map(lab)).noisy.mean().round(3).to_dict())
-    for m in ['mask_3h', 'mask_quality']:
-        s = E[E[m]]
-        print(f'{m}: {len(s):,} labelled epochs, {s.name.nunique()} nights; '
-              f'stages {s.stage.map(lab).value_counts(normalize=True).round(3).to_dict()}; '
-              f'after 3 h: {(s.epoch >= 360).mean():.0%}')
+    s = E[E.mask_quality]
+    print(f'mask_quality: {len(s):,} labelled epochs, {s.name.nunique()} nights; '
+          f'stages {s.stage.map(lab).value_counts(normalize=True).round(3).to_dict()}; '
+          f'after 3 h: {(s.epoch >= 360).mean():.0%}')
     late = E.epoch >= 360
     print(f'reliable stretches: first 3 h {E[~late].stretch_ok.mean():.0%}, later {E[late].stretch_ok.mean():.0%}')
 

@@ -34,28 +34,21 @@ class ResTCN(nn.Module):
 
 
 class RawNet(nn.Module):
-    """Epoch encoder (raw pulse + motion) + per-epoch inputs -> dilated temporal CNN (~+-30 min) -> transformer over the
-    night -> stage logits per epoch. Per-epoch inputs: the scaled hours since the start of the night only (c_min=1,
-    the released model), or all 19 minute inputs (c_min=19, training option RAWNET_INPUT=both)."""
+    """Epoch encoder (raw pulse + motion) + scaled hours since the start of the night -> dilated temporal CNN
+    (~+-30 min) -> transformer over the night -> stage logits per epoch."""
 
-    def __init__(self, c_min=19, n_cls=4, d=128, use_raw=True, use_minute=True):
+    def __init__(self, n_cls=5, d=128):
         super().__init__()
-        self.use_raw, self.use_minute = use_raw, use_minute
-        self.enc = Encoder(d=64) if use_raw else None
-        self.inp = nn.Linear((64 if use_raw else 0) + (c_min if use_minute else 0), d)
+        self.enc = Encoder(d=64)
+        self.inp = nn.Linear(64 + 1, d)
         self.tcn = nn.Sequential(*[ResTCN(d, k) for k in [1, 2, 4, 8, 16]])
         layer = nn.TransformerEncoderLayer(d, 4, 2 * d, dropout=0.1, batch_first=True, norm_first=True)
         self.tf = nn.TransformerEncoder(layer, 2)
         self.out = nn.Linear(d, n_cls)
 
-    def forward(self, raw, zmin, pad):  # raw [B, T, 5, 960], zmin [B, T, c], pad [B, T] True = padding
-        parts = []
-        if self.use_raw:
-            B, T = raw.shape[:2]
-            parts.append(self.enc(raw.reshape(B * T, *raw.shape[2:])).reshape(B, T, -1))
-        if self.use_minute:
-            parts.append(zmin)
-        h = self.inp(torch.cat(parts, -1))
+    def forward(self, raw, ztime, pad):  # raw [B, T, 5, 960], ztime [B, T, 1], pad [B, T] True = padding
+        B, T = raw.shape[:2]
+        h = self.inp(torch.cat([self.enc(raw.reshape(B * T, *raw.shape[2:])).reshape(B, T, -1), ztime], -1))
         h = self.tcn(h.transpose(1, 2)).transpose(1, 2)
         h = self.tf(h, src_key_padding_mask=pad)
         return self.out(h)

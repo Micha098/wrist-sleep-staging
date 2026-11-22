@@ -3,22 +3,18 @@ Wrist-only sleep model, step 4: raw-signal network (raw BVP + ACC) on the cluste
 
 Input  : per 30-s epoch
            raw    cache/raw_pack/raw.npy (prep/pack_raw.py): 5 x 960 samples (32 Hz BVP, ACC x/y/z, missing flag)
-           minute minute_inputs.py (minute signals, missing flags, worn), scaled as there
-         RAWNET_INPUT = raw (default, the released model: raw signals + hours since recording start) | both (also all
-         Empatica minute signals; the earlier release). Time of night is kept in both, as it is not a wristband signal.
-           extra  RAWNET_EXTRA = comma list of slow raw signals added to the epoch encoder: temp, eda
-                  (cache/raw_pack/<signal>.npy, prep/pack_slow.py; each repeated to 960 samples, + a missing flag)
-Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with the minute inputs ->
+           time   hours since the start of the recording, scaled as in minute_inputs.py
+Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with time of night ->
          residual dilated temporal CNN over epochs (dilations 1-16, ~ +-1 h) -> 2-layer transformer encoder over
          the night -> 5 classes per epoch (Wake, N1, N2, N3, REM).
-Labels / splits / loss: WRIST_LABELS mask, the 5 family folds of baseline_pred_3h.parquet, 20 % of training
+Labels / splits / loss: reliable-stretch labels (mask_quality), the 5 family folds of baseline_pred_quality_5st.parquet, 20 % of training
          families for early stopping, class-weighted CE. Training on random 8-h crops; validation and
          test on whole nights (up to 16 h).
 
 Env    : RAWNET_FOLD=-1 trains the final model on all families (20 % of families for early stopping, no test set)
-         and saves wrist/rawnet_final_<labels>_<input>.pt (weights, input scaling, config).
-         RAWNET_FOLD (0-4, or SLURM_ARRAY_TASK_ID), RAWNET_SEED, RAWNET_MAX_EPOCHS (30), RAWNET_INPUT, RAWNET_EXTRA, RAWNET_BS (8)
-Output : wrist/rawnet_pred_<labels>_<input>[_<extra>]_fold<k>.parquet (name, epoch, p_*)
+         and saves wrist/rawnet_final_quality_5st_raw.pt (weights, input scaling, config).
+         RAWNET_FOLD (0-4, or SLURM_ARRAY_TASK_ID), RAWNET_SEED, RAWNET_MAX_EPOCHS (30), RAWNET_BS (8)
+Output : wrist/rawnet_pred_quality_5st_raw_fold<k>.parquet (name, epoch, p_*)
 """
 import os
 import time
@@ -37,11 +33,7 @@ torch.backends.cudnn.enabled = True
 FOLD = int(os.environ.get('RAWNET_FOLD', os.environ.get('SLURM_ARRAY_TASK_ID', '0')))
 SEED = int(os.environ.get('RAWNET_SEED', '0'))
 MAX_EPOCHS = int(os.environ.get('RAWNET_MAX_EPOCHS', '30'))
-INPUT = os.environ.get('RAWNET_INPUT', 'raw')
-EXTRA = [s for s in os.environ.get('RAWNET_EXTRA', '').split(',') if s]
-assert INPUT in ('both', 'raw') and set(EXTRA) <= {'temp', 'eda'}, (INPUT, EXTRA)
-C_RAW = 5 + 2 * len(EXTRA)  # each extra signal + its missing flag
-NAME = INPUT + ''.join(f'_{s}' for s in EXTRA)
+INPUT = NAME = 'raw'  # raw pulse + motion + time of night
 POS_H = 8  # column of hours since recording start in the minute inputs (minute_inputs.night_arrays `cont`)
 BS = int(os.environ.get('RAWNET_BS', '8'))
 CROP = 960  # 8 h training crops
@@ -81,9 +73,8 @@ class ResTCN(nn.Module):
 class RawNet(nn.Module):
     def __init__(self, c_min, d=128, n_cls=len(NAMES)):
         super().__init__()
-        self.enc = Encoder(c_in=C_RAW, d=64)
-        c_in = 64 + (c_min if INPUT == 'both' else 1)
-        self.inp = nn.Linear(c_in, d)
+        self.enc = Encoder(c_in=5, d=64)
+        self.inp = nn.Linear(64 + 1, d)
         self.tcn = nn.Sequential(*[ResTCN(d, k) for k in [1, 2, 4, 8, 16]])
         layer = nn.TransformerEncoderLayer(d, 4, 2 * d, dropout=0.1, batch_first=True, norm_first=True)
         self.tf = nn.TransformerEncoder(layer, 2)
@@ -92,7 +83,7 @@ class RawNet(nn.Module):
     def forward(self, raw, zmin, pad):  # raw [B, T, 5, 960], zmin [B, T, c], pad [B, T] True = padding
         B, T = raw.shape[:2]
         parts = [self.enc(raw.reshape(B * T, *raw.shape[2:])).reshape(B, T, -1)]
-        parts.append(zmin if INPUT == 'both' else zmin[..., POS_H:POS_H + 1])
+        parts.append(zmin[..., POS_H:POS_H + 1])
         h = self.inp(torch.cat(parts, -1))
         h = self.tcn(h.transpose(1, 2)).transpose(1, 2)
         h = self.tf(h, src_key_padding_mask=pad)
@@ -105,19 +96,12 @@ def main():
     rng = np.random.default_rng(SEED)
     X, W, Y, L, meta, cont = night_arrays()
     assert cont[POS_H] == 'pos_h', cont
-    folds = pd.read_parquet(f'{P}/wrist/baseline_pred_3h.parquet', columns=['name', 'fold']).drop_duplicates('name')
+    folds = pd.read_parquet(f'{P}/wrist/baseline_pred_quality_5st.parquet', columns=['name', 'fold']).drop_duplicates('name')
     meta = meta.merge(folds, on='name', how='left')
     idx = pd.read_parquet(f'{P}/cache/raw_pack/index.parquet').set_index('name').loc[meta.name]
     assert (idx.n.to_numpy() == L).all(), 'raw pack and minute arrays disagree on night length'
     rows = idx.row.to_numpy()
     raw = torch.from_numpy(np.load(f'{P}/cache/raw_pack/raw.npy'))  # read fully into RAM (~21 GB)
-    extra = []
-    for s in EXTRA:
-        x = np.load(f'{P}/cache/raw_pack/{s}.npy')  # [epochs, bins], scaled by pack_slow.py, NaN = missing
-        miss = np.isnan(x)
-        extra.append(torch.from_numpy(np.stack([np.where(miss, 0, x), miss], 1).astype(np.float16))
-                     .repeat_interleave(960 // x.shape[1], dim=-1))  # [epochs, 2, 960]
-    extra = torch.cat(extra, 1) if extra else None
     print(f'{len(meta)} nights; device {DEV}; input {NAME}; data in {time.time() - t0:.0f}s', flush=True)
 
     tr = np.where(meta.fold != FOLD)[0]  # FOLD -1: every night
@@ -135,14 +119,12 @@ def main():
         starts = [int(rng.integers(0, max(1, L[i] - CROP + 1))) if crop else 0 for i in b]
         lens = [min(L[i] - s, CROP) if crop else L[i] for i, s in zip(b, starts)]
         T = max(lens)
-        r = torch.zeros(len(b), T, C_RAW, 960, dtype=torch.float16)
+        r = torch.zeros(len(b), T, 5, 960, dtype=torch.float16)
         z = torch.zeros(len(b), T, Z.shape[2])
         y = torch.full((len(b), T), -1, dtype=torch.long)
         pad = torch.ones(len(b), T, dtype=torch.bool)
         for j, (i, s, n) in enumerate(zip(b, starts, lens)):
-            r[j, :n, :5] = raw[rows[i] + s:rows[i] + s + n]
-            if extra is not None:
-                r[j, :n, 5:] = extra[rows[i] + s:rows[i] + s + n]
+            r[j, :n] = raw[rows[i] + s:rows[i] + s + n]
             z[j, :n], y[j, :n], pad[j, :n] = Z[i, s:s + n], Yt[i, s:s + n], False
         to = lambda t: t.to(DEV, non_blocking=True)
         return to(r).float(), to(z), to(y), to(pad), lens
@@ -200,7 +182,7 @@ def main():
     net.load_state_dict(best_state)
     if FOLD == -1:
         torch.save(dict(state_dict={k: t.cpu() for k, t in best_state.items()}, names=NAMES, cont=cont, med=med, iqr=iqr,
-                        input=INPUT, extra=EXTRA, labels=LABELS, best_epoch=best_ep, val_loss=best, n_fit=len(fit), n_val=len(val)),
+                        input=INPUT, labels=LABELS, best_epoch=best_ep, val_loss=best, n_fit=len(fit), n_val=len(val)),
                    f'{P}/wrist/rawnet_final_{LABELS}{ST_TAG}_{NAME}.pt')
         print(f'final model: fit {len(fit)} val {len(val)} nights, best epoch {best_ep}, val loss {best:.4f}, '
               f'done in {time.time() - t0:.0f}s', flush=True)

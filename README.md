@@ -13,24 +13,28 @@ who wore the wristband together with a Dreem EEG headband:
 Both models are trained on five stages (Wake, N1, N2, N3, REM). The four-stage output (Wake, Light, N3, REM) is the
 same hypnogram with N1 and N2 merged into Light, so the two outputs always agree.
 
-Agreement with the EEG headband in held-out families (5-fold cross-validation by family):
+Agreement with the EEG headband in held-out families (5-fold cross-validation by family). Epoch-level measures are on
+reliable stretches of the EEG reference (10-min windows with complete scoring and clean EEG on both channels, by the
+SSP Dreem power filter); night-level measures on whole nights. Empatica's own sleep detection is shown for comparison
+(wake/sleep only):
 
-| | Deep network | LightGBM |
-|---|---|---|
-| 4-stage Cohen's kappa, reliable epochs | **0.70** | 0.61 |
-| Macro F1 (4 stages) | **0.79** | 0.72 |
-| Wake/sleep kappa | 0.84 | 0.84 |
-| 5-stage kappa (N1 F1) | **0.67** (0.36) | 0.58 (0.28) |
-| Sleep onset latency: bias, r per night | +2.1 min, 0.84 | +0.4 min, 0.81 |
-| Total sleep time: bias, r per night | +23 min, 0.92 | +24 min, 0.93 |
-| WASO: bias, within-child r | −6.3 min, 0.53 | −7.1 min, 0.55 |
-| Awakenings: bias, within-child r | −1.8, **0.42** | −2.5, 0.36 |
+| | Deep network | LightGBM | Empatica |
+|---|---|---|---|
+| Wake/sleep kappa | **0.85** | **0.85** | 0.69 |
+| F1 sleep / wake | 0.98 / 0.87 | 0.98 / 0.87 | 0.94 / 0.75 |
+| 4-stage Cohen's kappa | **0.71** | 0.62 | – |
+| Macro F1 (4 stages) | **0.79** | 0.73 | – |
+| F1 light / N3 / REM | **0.72 / 0.84 / 0.75** | 0.64 / 0.79 / 0.60 | – |
+| 5-stage kappa (N1 F1) | **0.68** (0.36) | 0.59 (0.27) | – |
+| Sleep onset latency: bias, r per night | −1.4 min, **0.88** | +0.9 min, 0.82 | −1.9 min, 0.88 |
+| Total sleep time: bias, r per night | +28 min, 0.93 | +22 min, 0.93 | −37 min, 0.85 |
+| WASO: bias, within-child r | −8.6 min, 0.44 | −6.5 min, 0.55 | +52 min, 0.35 |
 
-Sleep and wake are separated with high agreement (wake/sleep kappa 0.84; F1 0.97 for sleep and 0.86 for wake), and the
-deep network identifies deep and REM sleep well (F1 0.83 and 0.75). Sleep onset latency and total sleep time track the
-EEG closely from night to night (r 0.84 and 0.92). Both models score some quiet wake as sleep, so total sleep time is
-over-estimated and WASO under-estimated by a similar amount on every night. Accuracy did not differ between autistic
-and non-autistic children or with age. See the paper [citation to be added] for the full validation.
+Sleep and wake are separated with high agreement by both models, well above the wristband's own algorithm, and the
+deep network identifies deep and REM sleep well. Sleep onset latency and total sleep time track the EEG closely from
+night to night. Both models score some quiet wake as sleep, so total sleep time is over-estimated and WASO
+under-estimated by a similar amount on every night. Accuracy did not differ between autistic and non-autistic children
+or with age. See the paper [citation to be added] for the full validation.
 
 ## Install
 
@@ -49,8 +53,7 @@ You need, per night:
 1. **Raw signals**: CSVs `time,bvp` and `time,x,y,z` (Unix seconds; accelerometer in g, 64 Hz), covering the night and
    the hour before it. Convert Empatica's raw Avro files to this layout first.
 2. **Start and end of the night**: bedtime (lights off) and rise time, with a UTC offset, e.g. `2024-05-03T21:30:00-04:00`.
-   The network uses time since the start of the night. Starting the window up to an hour before bedtime changed total
-   sleep, WASO and staging by about 1 minute or less in the validation data; SOL is counted from the start you give.
+   The network uses time since the start of the night; SOL is counted from the start you give.
 3. **Per-minute data** (optional): Empatica's "aggregated per minute" digital biomarkers in one CSV with the columns
    `timestamp_unix` (ms or s), `pulse_rate_bpm`, `prv_rmssd_ms`, `temperature_celsius`, `respiratory_rate_brpm`,
    `activity_counts`, `step_counts`, `wearing_detection_percentage`. Needed only for the LightGBM baseline and for

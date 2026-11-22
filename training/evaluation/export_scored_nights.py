@@ -7,11 +7,11 @@ that family). Nights: the 1,977 Dreem + Empatica nights (wristband worn >= 80 %)
 
 Output folder (OUT):
   nights/<SPID>/<night>.csv   per 30-s epoch: time (local), Dreem stage (5- and 4-class), model stage, model
-                              probabilities, Empatica's own sleep code, reliable-label flag
+                              probabilities, Empatica's own sleep code, wear, reliable-label flag
   all_epochs.parquet          the same for all nights
   night_measures.csv          per night: Dreem and model TST, SOL, WASO, awakenings, % Light / N3 / REM of sleep,
                               epoch agreement (kappa, accuracy), % epochs scored by Dreem, group, age
-  agreement_epochs.csv        epoch level: kappa, accuracy, per-stage precision / recall / F1 (all scored, reliable)
+  agreement_epochs.csv        epoch level: kappa, accuracy, per-stage precision / recall / F1 (reliable-stretch epochs)
   confusion_*.csv             confusion matrices (counts, row %)
   agreement_measures.csv      night level per measure: means, bias, 95 % limits of agreement, MAE, r, ICC(A,1),
                               within-child r, child-mean r
@@ -65,8 +65,7 @@ def load():
 
 def export_nights(D):
     cols = ['epoch', 't', 'dreem_stage5', 'dreem_stage', 'model_stage5', 'model_stage'] + PC + ['emp_stage', 'wear', 'reliable_label']
-    out = D[['SPID', 'name', 'date'] + cols].rename(columns={'t': 'time_local', 'emp_stage': 'empatica_sleep_code',
-                                                          'wear': 'wear_pct'})
+    out = D[['SPID', 'name', 'date'] + cols].rename(columns={'t': 'time_local', 'emp_stage': 'empatica_sleep_code', 'wear': 'wear_pct'})
     out[PC] = out[PC].round(4)
     out.to_parquet(f'{OUT}/all_epochs.parquet', index=False)
     for (spid, name), g in out.groupby(['SPID', 'name']):
@@ -87,10 +86,11 @@ def night_table(D):
             sl = both[col][both[col] > 0]
             for i, c in [(1, 'Light'), (2, 'N3'), (3, 'REM')]:
                 r[f'pct_{c}_{src}'] = (sl == i).mean() * 100 if len(sl) else np.nan
-        if len(both) > 0:
-            r['kappa'] = cohen_kappa_score(both.y.astype(int), both.raw_5m.astype(int), labels=[0, 1, 2, 3])
-            r['accuracy'] = accuracy_score(both.y.astype(int), both.raw_5m.astype(int))
-            r['kappa_wake_sleep'] = cohen_kappa_score(both.y > 0, both.raw_5m > 0)
+        rel = g[g.reliable_label & g.y.notna()]  # per-night agreement on reliable-stretch epochs
+        if len(rel) >= 100:
+            r['kappa'] = cohen_kappa_score(rel.y.astype(int), rel.raw_5m.astype(int), labels=[0, 1, 2, 3])
+            r['accuracy'] = accuracy_score(rel.y.astype(int), rel.raw_5m.astype(int))
+            r['kappa_wake_sleep'] = cohen_kappa_score(rel.y > 0, rel.raw_5m > 0)
         rows.append(r)
     N = pd.DataFrame(rows)
     C = pd.read_csv(CHILD, usecols=['SPID', 'group4', 'age', 'male'])
@@ -131,7 +131,7 @@ def measure_agreement(N):
 
 def epoch_agreement(D):
     rows, cms = [], {}
-    for sname, m in [('all scored epochs', D.y.notna()), ('reliable-label epochs', D.reliable_label & D.y.notna())]:
+    for sname, m in [('reliable-label epochs', D.reliable_label & D.y.notna())]:
         yt, yp = D.y[m].astype(int), D.raw_5m[m].astype(int)
         pr, rc, f1, sup = precision_recall_fscore_support(yt, yp, labels=[0, 1, 2, 3], zero_division=0)
         r = dict(epochs=len(yt), set=sname, kappa=cohen_kappa_score(yt, yp), accuracy=accuracy_score(yt, yp),
@@ -246,7 +246,6 @@ def fig_hypnograms(D, N, path):
 
 def readme(D, N, E, S, path):
     G = N[N.pct_scored >= 80]
-    e_all, e_rel = E.iloc[0], E.iloc[1]
     L = [
         '# Wrist deep-net sleep scoring of the paired Dreem + Empatica nights', '',
         f'{N.name.nunique():,} nights from {N.SPID.nunique()} children, scored every 30 s by the raw-signal deep '
@@ -268,10 +267,10 @@ def readme(D, N, E, S, path):
     for _, e in E.iterrows():
         L.append(f"| {e.set} | {e.epochs:,} | {e.kappa:.2f} | {e.accuracy:.0%} | {e.macro_F1:.2f} | {e.Wake_F1:.2f} "
                  f"| {e.Light_F1:.2f} | {e.N3_F1:.2f} | {e.REM_F1:.2f} | {e.wake_sleep_kappa:.2f} |")
-    L += ['', f"Per night (nights ≥ 80% scored): 4-stage kappa median {G.kappa.median():.2f} "
+    L += ['', f"Per night (nights ≥ 80% scored, reliable-stretch epochs): 4-stage kappa median {G.kappa.median():.2f} "
               f"(IQR {G.kappa.quantile(.25):.2f}–{G.kappa.quantile(.75):.2f}); wake/sleep kappa median "
               f"{G.kappa_wake_sleep.median():.2f}.", '',
-          '![confusion](figures/confusion_all_scored.png)', '', '![kappa](figures/per_night_kappa.png)', '',
+          '![confusion](figures/confusion_reliable.png)', '', '![kappa](figures/per_night_kappa.png)', '',
           f'## Sleep measures ({len(G):,} nights with ≥ 80% of epochs scored by Dreem)', '',
           '| Measure | Dreem mean (SD) | Deep net mean (SD) | Bias | 95% limits of agreement | MAE | r | ICC(A,1) | '
           'Within-child r | Child-mean r |', '|---|---|---|---|---|---|---|---|---|---|']
@@ -318,8 +317,6 @@ def main():
                      columns=[f'model_{c}' for c in NAMES]).round(1).to_csv(f'{OUT}/confusion_{tag}_row_pct.csv')
     S, G = measure_agreement(N)
     S.to_csv(f'{OUT}/agreement_measures.csv', index=False)
-    fig_confusion(cms['all scored epochs'], f'{OUT}/figures/confusion_all_scored.png',
-                  'All scored epochs (row %, counts)')
     fig_confusion(cms['reliable-label epochs'], f'{OUT}/figures/confusion_reliable.png',
                   'Reliable-label epochs (row %, counts)')
     fig_kappa(G, f'{OUT}/figures/per_night_kappa.png')

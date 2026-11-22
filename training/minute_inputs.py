@@ -4,7 +4,7 @@ Wrist-only sleep model: the per-minute Empatica inputs of the deep network (rawn
 Input  : per 30-s epoch, the minute wristband signals (log activity, log steps, HR, PRV, temperature, respiration,
          HR and temperature relative to the night median, worn flag, missing flags, hours since recording start),
          scaled by median / IQR of the training nights, clipped to +-5, missing -> 0. First 16 h of the night.
-Labels : Dreem, 5 classes (baseline_lgbm.CLASS); epochs outside the WRIST_LABELS mask are -1 (ignored by the loss).
+Labels : Dreem, 5 classes (baseline_lgbm.CLASS); epochs outside the reliable stretches (mask_quality) are -1 (ignored by the loss).
 """
 import numpy as np
 import pandas as pd

@@ -54,7 +54,7 @@ code("""boxes = [  # (x, y, w, label, highlight)
     (0.02, 0.86, 0.46, 'Dreem EEG headband\\nautomatic 30-s stages', False),
     (0.52, 0.86, 0.46, 'Empatica wristband\\nminute signals; raw pulse + motion (64 Hz)', False),
     (0.15, 0.70, 0.70, 'Align on 30-s epochs\\n1,977 nights worn >= 80% of the night', False),
-    (0.02, 0.54, 0.46, 'Reliable-stretch labels (5 stages)\\n10 min: <= 20% unscored, <= 30% noisy', False),
+    (0.02, 0.54, 0.46, 'Reliable-stretch labels (5 stages)\\n10 min: <= 20% unscored, <= 30% noisy\\n(SSP power filter, both channels)', False),
     (0.52, 0.54, 0.46, 'Wrist inputs\\nLightGBM: 9 minute signals\\ndeep net: raw pulse + motion, time of night', False),
     (0.02, 0.38, 0.46, 'LightGBM (baseline)\\n39 hand-crafted features', False),
     (0.52, 0.38, 0.46, 'Deep network\\nCNN encoder > TCN > transformer', True),
@@ -222,10 +222,10 @@ display(T[T.metric.isin(['kappa', 'macro_f1']) & T.model.isin(MODELS)][['model',
 
 md("""## Figure 8. Example nights
 
-Hypnograms of three nights at the 10th, 50th and 90th percentile of the deep network's per-night kappa (nights with
+Hypnograms of three nights at the 10th, 50th and 90th percentile of the deep network's per-night kappa (reliable-stretch epochs; nights with
 >= 80% scored), with Dreem (top trace), the deep network and LightGBM.""")
 code("""kap = {name: cohen_kappa_score(g.y.astype(int), g.raw_5m.astype(int), labels=range(4))
-       for name, g in A[A.name.isin(G.name)].dropna(subset=['y', 'raw_5m']).groupby('name')}
+       for name, g in A[A.name.isin(G.name) & A.mask_quality.fillna(False).astype(bool)].dropna(subset=['y', 'raw_5m']).groupby('name')}
 kap = pd.Series(kap).sort_values()
 pick = [kap.index[int(q * (len(kap) - 1))] for q in (0.1, 0.5, 0.9)]
 level = {0: 3, 3: 2, 1: 1, 2: 0}  # Wake, REM, Light, N3 from top to bottom

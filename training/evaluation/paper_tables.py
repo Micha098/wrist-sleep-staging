@@ -2,7 +2,8 @@
 Numbers for the paper (deep net = raw-signal network vs LightGBM, both trained on reliable-stretch labels, 5 stages scored as 4 with N1+N2 merged).
 
 Output: wrist/paper/paper_night_agreement.csv (per model and measure: means, bias, 95 % limits of agreement, MAE, r,
-        ICC(A,1), within-child r, child-mean r), paper_per_night_kappa.csv, paper_label_stats.csv
+        ICC(A,1), within-child r, child-mean r; whole nights with >= 80 % scored epochs), paper_per_night_kappa.csv
+        (kappa per night on its reliable-stretch epochs, nights with >= 100), paper_label_stats.csv
 """
 import numpy as np
 import pandas as pd
@@ -14,7 +15,7 @@ from scipy.stats import pearsonr
 
 W = f'{P}/wrist'
 OUT = f'{W}/paper'
-MODELS = {'lgbm_5m': 'LightGBM', 'raw_5m': 'Deep net'}  # 5-stage models, N1+N2 merged (merge_5stage.py)
+MODELS = {'empatica': 'Empatica', 'lgbm_5m': 'LightGBM', 'raw_5m': 'Deep net'}  # empatica: wake/sleep only; models: 5 stages, N1+N2 merged
 
 
 def nights(A):
@@ -22,16 +23,19 @@ def nights(A):
     for name, g in A.groupby('name', sort=True):
         r = dict(name=name, SPID=g.SPID.iloc[0], pct_scored=g.y.notna().mean() * 100)
         both = g[g.y.notna()]
+        rel = g[g.mask_quality & g.y.notna()]  # per-night kappa on reliable-stretch epochs
         for src in ['y'] + list(MODELS):
             for k, v in night_measures(g, src).items():
                 r[f'{k}_{src}'] = v
             bm = both[both[src].notna()]
             sl = bm[src][bm[src] > 0]
             for i, c in [(1, 'Light'), (2, 'N3'), (3, 'REM')]:
-                r[f'pct_{c}_{src}'] = (sl == i).mean() * 100 if len(sl) else np.nan
-            if src != 'y' and len(bm):
-                r[f'kappa_{src}'] = cohen_kappa_score(bm.y.astype(int), bm[src].astype(int), labels=[0, 1, 2, 3])
-                r[f'kappa_ws_{src}'] = cohen_kappa_score(bm.y > 0, bm[src] > 0)
+                r[f'pct_{c}_{src}'] = (sl == i).mean() * 100 if len(sl) and src != 'empatica' else np.nan
+            rm = rel[rel[src].notna()]
+            if src != 'y' and len(rm) >= 100:
+                if src != 'empatica':
+                    r[f'kappa_{src}'] = cohen_kappa_score(rm.y.astype(int), rm[src].astype(int), labels=[0, 1, 2, 3])
+                r[f'kappa_ws_{src}'] = cohen_kappa_score(rm.y > 0, rm[src] > 0)
         rows.append(r)
     return pd.DataFrame(rows)
 
@@ -41,6 +45,8 @@ def agreement(N):
     rows = []
     for m, lab in MODELS.items():
         for key, label in MEASURES:
+            if m == 'empatica' and key.startswith('pct_'):
+                continue
             d = G[['SPID', f'{key}_y', f'{key}_{m}']].dropna()
             a, b = d[f'{key}_y'].to_numpy(), d[f'{key}_{m}'].to_numpy()
             diff = b - a
@@ -67,7 +73,7 @@ def label_stats():
              reliable_share_of_scored=E.mask_quality.sum() / E.stage.notna().sum(),
              stretch_ok_first3h=E[~late].stretch_ok.mean(), stretch_ok_after3h=E[late].stretch_ok.mean(),
              reliable_after3h=(E[E.mask_quality].epoch >= 360).mean(),
-             noisy_sleep=E.noisy.mean(), mask3h_epochs=E.mask_3h.sum())
+             noisy_sleep=E.noisy.mean())
     for k, v in E[E.mask_quality].stage.map(lab).value_counts(normalize=True).items():
         r[f'reliable_share_{k}'] = v
     for k, v in E[E.stage.notna()].stage.map(lab).value_counts(normalize=True).items():
@@ -76,7 +82,8 @@ def label_stats():
 
 
 def main():
-    A = pd.read_parquet(f'{W}/eval_pred.parquet', columns=['SPID', 'name', 'epoch', 'y'] + list(MODELS))
+    A = pd.read_parquet(f'{W}/eval_pred.parquet', columns=['SPID', 'name', 'epoch', 'y', 'mask_quality'] + list(MODELS))
+    A['mask_quality'] = A.mask_quality.fillna(False).astype(bool)
     A = A.sort_values(['name', 'epoch'])
     N = nights(A)
     S = agreement(N)
@@ -84,7 +91,8 @@ def main():
     G = N[N.pct_scored >= 80]
     K = pd.DataFrame([dict(model=lab, measure=f'{w} kappa per night', median=G[f'{c}_{m}'].median(),
                            q25=G[f'{c}_{m}'].quantile(.25), q75=G[f'{c}_{m}'].quantile(.75), nights=G[f'{c}_{m}'].notna().sum())
-                      for m, lab in MODELS.items() for c, w in [('kappa', '4-stage'), ('kappa_ws', 'wake/sleep')]])
+                      for m, lab in MODELS.items() for c, w in [('kappa', '4-stage'), ('kappa_ws', 'wake/sleep')]
+                      if f'{c}_{m}' in G])
     K.to_csv(f'{OUT}/paper_per_night_kappa.csv', index=False)
     L = label_stats()
     L.to_csv(f'{OUT}/paper_label_stats.csv', header=['value'])

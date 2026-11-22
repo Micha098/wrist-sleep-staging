@@ -1,11 +1,10 @@
 """
-Wrist-only sleep model: the evaluation table of the paper (one 5-stage model per method; decision 2026-11-18).
+Wrist-only sleep model: the evaluation table of the paper.
 
 Both models are trained on five stages (Wake, N1, N2, N3, REM). Their four-stage output is the
-5-stage hypnogram with N1 and N2 merged into Light (hard labels), so the 4- and 5-stage outputs always agree; staging
-accuracy equals that of a separately trained 4-stage model (reliable kappa .709 vs .713).
+5-stage hypnogram with N1 and N2 merged into Light (hard labels), so the 4- and 5-stage outputs always agree.
 
-Input : baseline_pred_quality_5st.parquet (labels, masks, Empatica code, LightGBM out-of-fold predictions)
+Input : baseline_pred_quality_5st.parquet (labels, reliable-stretch mask, Empatica sleep code, LightGBM out-of-fold predictions)
         rawnet_pred/rawnet_pred_quality_5st_raw_fold?.parquet (deep-network out-of-fold predictions)
 Output: wrist/eval_pred.parquet, one row per 30-s epoch: SPID, name, date, epoch, stage (Dreem code), y (4-class Dreem
         label), mask_quality, empatica, lgbm_5m and raw_5m (4-class predictions), lgbm_5 and raw_5 (5-class)
