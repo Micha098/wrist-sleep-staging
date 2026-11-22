@@ -10,6 +10,10 @@ who wore the wristband together with a Dreem EEG headband:
 | **Deep network** (`rawnet`) | raw pulse (BVP) + accelerometer at 32 Hz and time since the start of the night, over the whole night | the recommended model |
 | **LightGBM** (`lgbm`) | Empatica's per-minute signals with rolling features | the baseline of the paper |
 
+This branch (`motion-only`) adds a third model, **motion only** (`rawnet_acc`): the same deep network reading only
+the raw accelerometer and time since the start of the night, for devices without a pulse sensor (see
+[Motion-only model](#motion-only-model)).
+
 Both models are trained on five stages (Wake, N1, N2, N3, REM). The four-stage output (Wake, Light, N3, REM) is the
 same hypnogram with N1 and N2 merged into Light, so the two outputs always agree.
 
@@ -84,6 +88,41 @@ epochs, summary = sc.score_night(start, end, bvp=bvp_df, acc=acc_df, minutes=min
 **Recommended use:** the deep network for sleep/wake, stages, SOL, TST and WASO. Because the TST and WASO biases are
 consistent, these measures compare well between nights and children.
 
+## Motion-only model
+
+`weights/rawnet_acc.*` is the deep network trained on the same nights, labels and family folds with the pulse channel
+removed: raw accelerometer x/y/z (32 Hz, g, clipped to ±4) with its own missing-data flag, and time since the start of
+the night. Held-out agreement with the EEG headband, next to the pulse + motion network:
+
+| | Pulse + motion | Motion only |
+|---|---|---|
+| Wake/sleep kappa | 0.84 | **0.85** |
+| F1 sleep / wake | 0.97 / 0.86 | 0.97 / 0.87 |
+| 4-stage kappa (macro F1) | **0.70** (0.79) | 0.59 (0.71) |
+| 5-stage kappa | **0.67** | 0.57 |
+| F1 light / N3 / REM | **0.72 / 0.83 / 0.75** | 0.62 / 0.80 / 0.54 |
+| Sleep onset latency: bias, r per night | +2.1 min, 0.84 | −0.4 min, 0.88 |
+| Total sleep time: bias, r per night | +23 min, 0.92 | +30 min, 0.94 |
+| WASO: bias, within-child r | −6.3 min, 0.53 | −10.7 min, 0.60 |
+
+Motion alone detects sleep and wake as well as pulse + motion, and deep sleep nearly as well; the pulse signal is
+what identifies REM sleep. Use the motion-only model for sleep/wake, SOL, TST and WASO from accelerometer-only devices,
+and the pulse + motion model whenever a pulse signal is available.
+
+```python
+from wristsleep.score import Scorer
+epochs, summary = Scorer(model='acc').score_night(start, end, acc=acc_df)   # acc_df: time (Unix s), x, y, z in g
+```
+
+```bash
+python -m wristsleep.score nights.csv --model acc --out results/   # bvp_csv column may be left out
+```
+
+**Other devices (e.g. ActiGraph).** Export the raw accelerometer (e.g. ActiLife or `pygt3x` for `.gt3x` files) to
+`time,x,y,z` in g, from a band worn on the wrist; any sampling rate of 32 Hz or more works, as the scorer resamples to
+32 Hz. The model was trained on the Empatica EmbracePlus only: sensor range, filtering and the wrist it is worn on may
+shift the results, so validate it against EEG or PSG on the new device before relying on stages.
+
 ## What the models expect
 
 The scoring code rebuilds the inputs exactly as in training (`wristsleep/inputs.py`; tests compare it with the training
@@ -105,6 +144,7 @@ code):
 | File | Model |
 |---|---|
 | `rawnet.pt`, `rawnet.json` | deep network (PyTorch state dict; JSON = classes and input scaling) |
+| `rawnet_acc.pt`, `rawnet_acc.json` | motion-only deep network (`Scorer(model='acc')`) |
 | `lgbm.txt`, `lgbm.json` | LightGBM (LightGBM text model; JSON = feature order) |
 
 The weights are loaded with `torch.load(..., weights_only=True)`: they contain tensors only, no code.

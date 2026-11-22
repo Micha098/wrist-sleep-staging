@@ -65,3 +65,15 @@ def test_motion_only_network_shapes():
     with torch.no_grad():
         out = net(torch.zeros(1, 40, 4, 960), torch.zeros(1, 40, 1), torch.zeros(1, 40, dtype=torch.bool))
     assert out.shape == (1, 40, 5)
+
+
+def test_score_night_motion_only():
+    import os
+    import pytest
+    from wristsleep.score import WEIGHTS, Scorer
+    if not os.path.exists(WEIGHTS / 'rawnet_acc.pt'):
+        pytest.skip('weights not present')
+    _, _, acc = synthetic()
+    ep, s = Scorer(model='acc').score_night(START, START + HOURS * 3600, acc=acc)
+    assert len(ep) == HOURS * 120 and set(ep.stage5) <= {'Wake', 'N1', 'N2', 'N3', 'REM'}
+    assert s['raw_missing_fraction'] == 0 and 'lgbm_WASO_min' not in s
