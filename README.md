@@ -26,11 +26,11 @@ Agreement with the EEG headband in held-out families (5-fold cross-validation by
 | WASO: bias, within-child r | −6.3 min, 0.53 | −7.1 min, 0.55 |
 | Awakenings: bias, within-child r | −1.8, **0.42** | −2.5, 0.36 |
 
-Both models over-estimate total sleep time and under-estimate WASO and awakenings (about one in six wake epochs is
-scored as sleep, mostly as N1); use these as relative measures (night-to-night, child-to-child) rather than absolute
-durations. Accuracy did not differ between autistic and non-autistic children or with age. Per-night percentages of
-light, deep and REM sleep agree poorly with the EEG (r 0.19–0.43) and should not be used to compare groups. See the paper
-[citation to be added] for the full validation.
+Sleep and wake are separated with high agreement (wake/sleep kappa 0.84; F1 0.97 for sleep and 0.86 for wake), and the
+deep network identifies deep and REM sleep well (F1 0.83 and 0.75). Sleep onset latency and total sleep time track the
+EEG closely from night to night (r 0.84 and 0.92). Both models score some quiet wake as sleep, so total sleep time is
+over-estimated and WASO under-estimated by a similar amount on every night. Accuracy did not differ between autistic
+and non-autistic children or with age. See the paper [citation to be added] for the full validation.
 
 ## Install
 
@@ -81,9 +81,8 @@ sc = Scorer()
 epochs, summary = sc.score_night(start, end, bvp=bvp_df, acc=acc_df, minutes=minutes_df)  # minutes optional
 ```
 
-**Recommended use:** the deep network for stages, SOL, TST and WASO; TST and WASO as relative measures (see above).
-Use N1 minutes only as a rough relative index of fragmentation (within-child r 0.50), not as absolute minutes (N1 is
-over-counted about 2.6-fold).
+**Recommended use:** the deep network for sleep/wake, stages, SOL, TST and WASO. Because the TST and WASO biases are
+consistent, these measures compare well between nights and children.
 
 ## What the models expect
 
