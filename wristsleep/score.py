@@ -15,6 +15,10 @@ Python:
 
 Command line (one row per night in nights.csv: night_id, bvp_csv, acc_csv, start, end, and optionally minutes_csv):
     python -m wristsleep.score nights.csv --out results/
+
+Motion-only network (accelerometer + time of night; for devices without a pulse sensor, e.g. ActiGraph on the wrist):
+    Scorer(model='acc').score_night(start, end, acc=acc)
+    python -m wristsleep.score nights.csv --model acc --out results/   (bvp_csv may be left out)
 """
 import argparse
 import json
@@ -115,12 +119,13 @@ def main():
     ap = argparse.ArgumentParser(description='Score Empatica nights (see README).')
     ap.add_argument('nights', help='CSV: night_id, bvp_csv, acc_csv, start, end [, minutes_csv]')
     ap.add_argument('--out', default='results')
+    ap.add_argument('--model', default='raw', choices=['raw', 'acc'], help='raw: pulse + motion; acc: motion only')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    sc = Scorer()
+    sc = Scorer(model=a.model)
     rows = []
     for n in pd.read_csv(a.nights).itertuples():
-        ep, s = sc.score_night(n.start, n.end, bvp=_read(n.bvp_csv), acc=_read(n.acc_csv),
+        ep, s = sc.score_night(n.start, n.end, bvp=_read(getattr(n, 'bvp_csv', None)), acc=_read(n.acc_csv),
                                minutes=_read(getattr(n, 'minutes_csv', None)))
         ep.to_csv(f'{a.out}/{n.night_id}_epochs.csv', index=False)
         rows.append(dict(night_id=n.night_id, **s))
