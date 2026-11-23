@@ -35,11 +35,12 @@ class ResTCN(nn.Module):
 
 class RawNet(nn.Module):
     """Epoch encoder (raw pulse + motion) + scaled hours since the start of the night -> dilated temporal CNN
-    (~+-30 min) -> transformer over the night -> stage logits per epoch."""
+    (~+-30 min) -> transformer over the night -> stage logits per epoch. c_raw: 5 raw channels (pulse + motion +
+    missing flag) or 2 (pulse only: BVP + its missing flag)."""
 
-    def __init__(self, n_cls=5, d=128):
+    def __init__(self, n_cls=5, d=128, c_raw=5):
         super().__init__()
-        self.enc = Encoder(d=64)
+        self.enc = Encoder(c_in=c_raw, d=64)
         self.inp = nn.Linear(64 + 1, d)
         self.tcn = nn.Sequential(*[ResTCN(d, k) for k in [1, 2, 4, 8, 16]])
         layer = nn.TransformerEncoderLayer(d, 4, 2 * d, dropout=0.1, batch_first=True, norm_first=True)

@@ -100,6 +100,12 @@ def raw_epochs(bvp, acc, start, n_epochs):
     return np.nan_to_num(out, nan=0.0).astype(np.float16)
 
 
+def ppg_epochs(bvp, start, n_epochs):
+    """[n_epochs, 2, 960] pulse-only inputs: BVP (robust-scaled per night) and its missing flag."""
+    r = raw_epochs(bvp, None, start, n_epochs)
+    return np.stack([r[:, 0], (r[:, 0] == 0).astype(np.float16)], 1)
+
+
 def lgbm_features(E):
     """The 39 LightGBM features per epoch (as training/baseline_lgbm.py `features`), for one night."""
     E = E.sort_values('epoch').reset_index(drop=True).copy()

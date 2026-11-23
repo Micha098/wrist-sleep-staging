@@ -15,6 +15,10 @@ Python:
 
 Command line (one row per night in nights.csv: night_id, bvp_csv, acc_csv, start, end, and optionally minutes_csv):
     python -m wristsleep.score nights.csv --out results/
+
+Pulse-only network (BVP + time of night; for nights or devices without a usable accelerometer):
+    Scorer(model='ppg').score_night(start, end, bvp=bvp)
+    python -m wristsleep.score nights.csv --model ppg --out results/   (acc_csv may be left out)
 """
 import argparse
 import json
@@ -25,7 +29,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .inputs import epoch_table, lgbm_features, network_minute_inputs, raw_epochs
+from .inputs import epoch_table, lgbm_features, network_minute_inputs, ppg_epochs, raw_epochs
 from .measures import night_measures
 from .model import RawNet
 
@@ -45,12 +49,15 @@ def to_unix(x):
 
 
 class Scorer:
-    def __init__(self, weights_dir=WEIGHTS, device='cpu'):
-        meta = json.load(open(Path(weights_dir) / 'rawnet.json'))  # classes + input scaling of the fit set
+    def __init__(self, weights_dir=WEIGHTS, device='cpu', model='raw'):
+        """model: 'raw' (pulse + motion, weights/rawnet.*) or 'ppg' (pulse only, weights/rawnet_ppg.*)."""
+        stem = 'rawnet' if model == 'raw' else f'rawnet_{model}'
+        meta = json.load(open(Path(weights_dir) / f'{stem}.json'))  # classes + input scaling of the fit set
         self.names = meta['names']
         self.med, self.iqr = np.asarray(meta['med']), np.asarray(meta['iqr'])
-        self.net = RawNet(n_cls=len(self.names))
-        self.net.load_state_dict(torch.load(Path(weights_dir) / 'rawnet.pt', map_location='cpu', weights_only=True))
+        self.input = meta.get('input', 'raw')
+        self.net = RawNet(n_cls=len(self.names), c_raw=2 if self.input == 'ppg' else 5)
+        self.net.load_state_dict(torch.load(Path(weights_dir) / f'{stem}.pt', map_location='cpu', weights_only=True))
         self.net.eval().to(device)
         self.device = device
         self.lgbm = None
@@ -66,12 +73,15 @@ class Scorer:
         for Empatica's wear detection). Returns (epochs DataFrame, night summary dict)."""
         if bvp is None and acc is None:
             raise ValueError('the deep network needs the raw pulse and/or accelerometer data')
+        if self.input == 'ppg' and bvp is None:
+            raise ValueError('the pulse-only network needs the raw pulse (BVP) data')
         start, end = to_unix(start), to_unix(end)
         E = epoch_table(minutes, start, end)
         z = network_minute_inputs(E, self.med, self.iqr)
         z = z[:, [len(self.med) - 1]]  # scaled hours since the start of the night (last input)
         z = torch.from_numpy(z)[None]
-        r = torch.from_numpy(raw_epochs(bvp, acc, start, len(E))).float()[None]
+        raw = ppg_epochs(bvp, start, len(E)) if self.input == 'ppg' else raw_epochs(bvp, acc, start, len(E))
+        r = torch.from_numpy(raw).float()[None]
         pad = torch.zeros(1, len(E), dtype=torch.bool)
         with torch.no_grad():
             p = torch.softmax(self.net(r.to(self.device), z.to(self.device), pad.to(self.device)), -1)[0].cpu().numpy()
@@ -90,9 +100,9 @@ class Scorer:
             out['stage_lgbm'] = np.array(NAMES4)[MERGE[l5]]
             m = night_measures(l5, self.names)
             summary.update({f'lgbm_{k}': m[k] for k in ['TST_min', 'SOL_min', 'WASO_min', 'awakenings']})
-        worn = (E.wear >= 50).mean() if minutes is not None else 1 - float(r[0, :, 4].mean())
+        worn = (E.wear >= 50).mean() if minutes is not None else 1 - float(r[0, :, -1].mean())
         summary.update(epochs=len(E), worn_fraction=round(float(worn), 3),
-                       raw_missing_fraction=round(float(r[0, :, 4].mean()), 3))
+                       raw_missing_fraction=round(float(r[0, :, -1].mean()), 3))
         if worn < 0.8:
             summary['warning'] = 'wristband worn < 80% of the night: the models were validated on worn nights only'
         return out, summary
@@ -106,12 +116,13 @@ def main():
     ap = argparse.ArgumentParser(description='Score Empatica nights (see README).')
     ap.add_argument('nights', help='CSV: night_id, bvp_csv, acc_csv, start, end [, minutes_csv]')
     ap.add_argument('--out', default='results')
+    ap.add_argument('--model', default='raw', choices=['raw', 'ppg'], help='raw: pulse + motion; ppg: pulse only')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    sc = Scorer()
+    sc = Scorer(model=a.model)
     rows = []
     for n in pd.read_csv(a.nights).itertuples():
-        ep, s = sc.score_night(n.start, n.end, bvp=_read(n.bvp_csv), acc=_read(n.acc_csv),
+        ep, s = sc.score_night(n.start, n.end, bvp=_read(n.bvp_csv), acc=_read(getattr(n, 'acc_csv', None)),
                                minutes=_read(getattr(n, 'minutes_csv', None)))
         ep.to_csv(f'{a.out}/{n.night_id}_epochs.csv', index=False)
         rows.append(dict(night_id=n.night_id, **s))

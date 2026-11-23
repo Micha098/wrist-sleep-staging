@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-from wristsleep.inputs import epoch_table, lgbm_features, network_minute_inputs, raw_epochs
+from wristsleep.inputs import epoch_table, lgbm_features, network_minute_inputs, ppg_epochs, raw_epochs
 from wristsleep.measures import night_measures
 
 START = 1_714_782_600.0  # 2024-05-04 00:30 UTC
@@ -31,6 +31,9 @@ def test_inputs_have_trained_shapes():
     r = raw_epochs(bvp, acc, START, len(E))
     assert r.shape == (len(E), 5, 960) and r[:, 4].max() == 0  # no missing raw data
     assert lgbm_features(E).shape[1] == 39
+    p = ppg_epochs(bvp, START, len(E))
+    assert p.shape == (len(E), 2, 960) and p[:, 1].max() == 0 and (p[:, 0] == r[:, 0]).all()
+    assert ppg_epochs(bvp[bvp.time < START + 3600], START, len(E))[-1, 1].min() == 1  # no data -> flagged missing
 
 
 def test_night_measures():
@@ -53,3 +56,24 @@ def test_score_night_end_to_end():
     assert 0 <= s['net_TST_min'] <= HOURS * 60 and 'lgbm_WASO_min' in s
     ep2, s2 = Scorer().score_night(START, START + HOURS * 3600, bvp=bvp, acc=acc)  # raw signals only
     assert (ep2.stage5 == ep.stage5).all() and 'lgbm_WASO_min' not in s2
+
+
+def test_pulse_only_network_shapes():
+    import torch
+    from wristsleep.model import RawNet
+    net = RawNet(n_cls=5, c_raw=2).eval()
+    with torch.no_grad():
+        out = net(torch.zeros(1, 40, 2, 960), torch.zeros(1, 40, 1), torch.zeros(1, 40, dtype=torch.bool))
+    assert out.shape == (1, 40, 5)
+
+
+def test_score_night_pulse_only():
+    import os
+    import pytest
+    from wristsleep.score import WEIGHTS, Scorer
+    if not os.path.exists(WEIGHTS / 'rawnet_ppg.pt'):
+        pytest.skip('weights not present')
+    _, bvp, _ = synthetic()
+    ep, s = Scorer(model='ppg').score_night(START, START + HOURS * 3600, bvp=bvp)
+    assert len(ep) == HOURS * 120 and set(ep.stage5) <= {'Wake', 'N1', 'N2', 'N3', 'REM'}
+    assert s['raw_missing_fraction'] == 0 and 'lgbm_WASO_min' not in s

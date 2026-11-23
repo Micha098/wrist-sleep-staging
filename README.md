@@ -92,6 +92,40 @@ epochs, summary = sc.score_night(start, end, bvp=bvp_df, acc=acc_df, minutes=min
 **Recommended use:** the deep network for sleep/wake, stages, SOL, TST and WASO. Because the TST and WASO biases are
 consistent, these measures compare well between nights and children.
 
+## Pulse-only model
+
+`weights/rawnet_ppg.*` is the deep network trained on the same nights, labels and family folds with the accelerometer
+removed: the raw pulse waveform (BVP, 32 Hz, robust-scaled per night) with its own missing-data flag, and time since the
+start of the night. Held-out agreement with the EEG headband, next to the pulse + motion network:
+
+| | Pulse + motion | Pulse only |
+|---|---|---|
+| Wake/sleep kappa | 0.85 | 0.85 |
+| Wake F1 | 0.87 | 0.87 |
+| 4-stage kappa (macro F1) | 0.71 (0.80) | 0.71 (0.80) |
+| 5-stage kappa | 0.68 | 0.68 |
+| F1 light / N3 / REM | 0.72 / 0.83 / 0.75 | 0.72 / 0.84 / 0.75 |
+| Sleep onset latency: bias, r per night | −1.4 min, 0.88 | −1.9 min, 0.88 |
+| Total sleep time: bias, r per night | +28 min, 0.93 | +28 min, 0.93 |
+| WASO: bias, within-child r | −8.6 min, 0.44 | −7.7 min, 0.49 |
+
+The pulse waveform alone stages sleep as well as pulse + motion: the accelerometer adds nothing once the raw pulse is
+available, probably because movement also shows in the pulse waveform. Use the pulse-only model for nights where the
+accelerometer is missing or unusable, and for other devices that record a raw PPG waveform.
+
+```python
+from wristsleep.score import Scorer
+epochs, summary = Scorer(model='ppg').score_night(start, end, bvp=bvp_df)   # bvp_df: time (Unix s), bvp
+```
+
+```bash
+python -m wristsleep.score nights.csv --model ppg --out results/   # acc_csv column may be left out
+```
+
+**Other devices.** The model was trained on the Empatica EmbracePlus wrist PPG (64 Hz, resampled to 32 Hz) only:
+wavelength, sampling rate, filtering and the wrist it is worn on may shift the results, so validate it against EEG or
+PSG on the new device before relying on stages.
+
 ## What the models expect
 
 The scoring code rebuilds the inputs exactly as in training (`wristsleep/inputs.py`; tests compare it with the training
@@ -113,6 +147,7 @@ code):
 | File | Model |
 |---|---|
 | `rawnet.pt`, `rawnet.json` | deep network (PyTorch state dict; JSON = classes and input scaling) |
+| `rawnet_ppg.pt`, `rawnet_ppg.json` | pulse-only deep network (raw BVP + time of night) |
 | `lgbm.txt`, `lgbm.json` | LightGBM (LightGBM text model; JSON = feature order) |
 
 The weights are loaded with `torch.load(..., weights_only=True)`: they contain tensors only, no code.

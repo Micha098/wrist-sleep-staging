@@ -4,6 +4,8 @@ Wrist-only sleep model, step 4: raw-signal network (raw BVP + ACC) on the cluste
 Input  : per 30-s epoch
            raw    cache/raw_pack/raw.npy (prep/pack_raw.py): 5 x 960 samples (32 Hz BVP, ACC x/y/z, missing flag)
            time   hours since the start of the recording, scaled as in minute_inputs.py
+         RAWNET_INPUT = raw (default, the released model: pulse + motion) | ppg (pulse only: BVP + its own missing flag;
+         for devices or nights without a usable accelerometer). Time of night is kept in both.
 Model  : epoch encoder (strided 1-D CNN on the raw 30 s, mean + SD pooling) -> concat with time of night ->
          residual dilated temporal CNN over epochs (dilations 1-16, ~ +-1 h) -> 2-layer transformer encoder over
          the night -> 5 classes per epoch (Wake, N1, N2, N3, REM).
@@ -12,9 +14,9 @@ Labels / splits / loss: reliable-stretch labels (mask_quality), the 5 family fol
          test on whole nights (up to 16 h).
 
 Env    : RAWNET_FOLD=-1 trains the final model on all families (20 % of families for early stopping, no test set)
-         and saves wrist/rawnet_final_quality_5st_raw.pt (weights, input scaling, config).
-         RAWNET_FOLD (0-4, or SLURM_ARRAY_TASK_ID), RAWNET_SEED, RAWNET_MAX_EPOCHS (30), RAWNET_BS (8)
-Output : wrist/rawnet_pred_quality_5st_raw_fold<k>.parquet (name, epoch, p_*)
+         and saves wrist/rawnet_final_quality_5st_<input>.pt (weights, input scaling, config).
+         RAWNET_FOLD (0-4, or SLURM_ARRAY_TASK_ID), RAWNET_SEED, RAWNET_MAX_EPOCHS (30), RAWNET_INPUT, RAWNET_BS (8)
+Output : wrist/rawnet_pred_quality_5st_<input>_fold<k>.parquet (name, epoch, p_*)
 """
 import os
 import time
@@ -33,7 +35,9 @@ torch.backends.cudnn.enabled = True
 FOLD = int(os.environ.get('RAWNET_FOLD', os.environ.get('SLURM_ARRAY_TASK_ID', '0')))
 SEED = int(os.environ.get('RAWNET_SEED', '0'))
 MAX_EPOCHS = int(os.environ.get('RAWNET_MAX_EPOCHS', '30'))
-INPUT = NAME = 'raw'  # raw pulse + motion + time of night
+INPUT = NAME = os.environ.get('RAWNET_INPUT', 'raw')  # raw: pulse + motion; ppg: pulse only (+ time of night in both)
+assert INPUT in ('raw', 'ppg'), INPUT
+C_RAW = 2 if INPUT == 'ppg' else 5  # BVP + its missing flag, or BVP + ACC x/y/z + missing flag
 POS_H = 8  # column of hours since recording start in the minute inputs (minute_inputs.night_arrays `cont`)
 BS = int(os.environ.get('RAWNET_BS', '8'))
 CROP = 960  # 8 h training crops
@@ -73,7 +77,7 @@ class ResTCN(nn.Module):
 class RawNet(nn.Module):
     def __init__(self, c_min, d=128, n_cls=len(NAMES)):
         super().__init__()
-        self.enc = Encoder(c_in=5, d=64)
+        self.enc = Encoder(c_in=C_RAW, d=64)
         self.inp = nn.Linear(64 + 1, d)
         self.tcn = nn.Sequential(*[ResTCN(d, k) for k in [1, 2, 4, 8, 16]])
         layer = nn.TransformerEncoderLayer(d, 4, 2 * d, dropout=0.1, batch_first=True, norm_first=True)
@@ -119,12 +123,16 @@ def main():
         starts = [int(rng.integers(0, max(1, L[i] - CROP + 1))) if crop else 0 for i in b]
         lens = [min(L[i] - s, CROP) if crop else L[i] for i, s in zip(b, starts)]
         T = max(lens)
-        r = torch.zeros(len(b), T, 5, 960, dtype=torch.float16)
+        r = torch.zeros(len(b), T, C_RAW, 960, dtype=torch.float16)
         z = torch.zeros(len(b), T, Z.shape[2])
         y = torch.full((len(b), T), -1, dtype=torch.long)
         pad = torch.ones(len(b), T, dtype=torch.bool)
         for j, (i, s, n) in enumerate(zip(b, starts, lens)):
-            r[j, :n] = raw[rows[i] + s:rows[i] + s + n]
+            x = raw[rows[i] + s:rows[i] + s + n]
+            if INPUT == 'ppg':  # BVP + its own missing flag (missing samples are exactly 0)
+                r[j, :n, 0], r[j, :n, 1] = x[:, 0], x[:, 0] == 0
+            else:
+                r[j, :n] = x
             z[j, :n], y[j, :n], pad[j, :n] = Z[i, s:s + n], Yt[i, s:s + n], False
         to = lambda t: t.to(DEV, non_blocking=True)
         return to(r).float(), to(z), to(y), to(pad), lens
